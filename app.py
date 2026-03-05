@@ -88,6 +88,17 @@ SEED_VERTICALS = [
 
 def init_db():
     db.create_all()
+    db.session.execute(db.text("""
+        CREATE TABLE IF NOT EXISTS otp_codes (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL,
+            code TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            used BOOLEAN DEFAULT FALSE
+        )
+    """))
+    db.session.commit()
     if Vertical.query.count() == 0:
         for v_data in SEED_VERTICALS:
             v = Vertical(**v_data)
