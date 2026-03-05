@@ -84,9 +84,10 @@ def login():
         )
         db.session.commit()
 
-        send_otp_email(email, otp_code)
+        email_sent = send_otp_email(email, otp_code)
 
         session["otp_email"] = email
+        session["otp_display"] = otp_code if not SMTP_HOST else None
         return redirect(url_for("otp_auth.verify"))
 
     return render_template("login.html")
@@ -140,7 +141,8 @@ def verify():
 
         return redirect(url_for("main.index"))
 
-    return render_template("verify_otp.html", email=email)
+    otp_display = session.pop("otp_display", None)
+    return render_template("verify_otp.html", email=email, otp_display=otp_display)
 
 
 @otp_auth.route("/resend", methods=["POST"])
@@ -160,6 +162,7 @@ def resend():
 
     send_otp_email(email, otp_code)
 
+    session["otp_display"] = otp_code if not SMTP_HOST else None
     return redirect(url_for("otp_auth.verify"))
 
 

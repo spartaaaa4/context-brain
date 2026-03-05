@@ -6,8 +6,15 @@
         <div class="login-header">
             <span class="login-icon">🔐</span>
             <h1>Enter Verification Code</h1>
-            <p class="login-desc">We sent a 6-digit code to <strong>{{ email }}</strong></p>
+            <p class="login-desc">Verify your identity for <strong>{{ email }}</strong></p>
         </div>
+        {% if otp_display %}
+        <div class="otp-display-box">
+            <p class="otp-display-label">Your verification code</p>
+            <div class="otp-display-code">{{ otp_display }}</div>
+            <p class="otp-display-hint">Enter this code below to sign in</p>
+        </div>
+        {% endif %}
         {% if error %}
         <div class="login-error">{{ error }}</div>
         {% endif %}
@@ -19,9 +26,8 @@
             <button type="submit" class="login-btn">Verify & Sign In</button>
         </form>
         <div class="login-footer">
-            <p>Didn't receive the code? Check your spam folder or</p>
             <form method="POST" action="/resend" style="display:inline">
-                <button type="submit" class="resend-btn">Resend Code</button>
+                <button type="submit" class="resend-btn">Generate New Code</button>
             </form>
             <p style="margin-top: 12px"><a href="/login" class="back-link">Use a different email</a></p>
         </div>
