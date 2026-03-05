@@ -33,9 +33,9 @@ def index():
     return render_template("login.html")
 
 
-@main_routes.route("/login")
+@main_routes.route("/login_page")
 def login_page():
-    return render_template("login.html")
+    return redirect(url_for("otp_auth.login"))
 
 
 @main_routes.route("/vertical/<vertical_id>")

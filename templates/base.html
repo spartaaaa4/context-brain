@@ -22,9 +22,7 @@
         <div class="nav-right">
             {% block nav_extra %}{% endblock %}
             <div class="nav-user">
-                {% if current_user.profile_pic %}
-                <img src="{{ current_user.profile_pic }}" alt="" class="nav-avatar">
-                {% endif %}
+                <div class="nav-avatar-initial">{{ current_user.display_name[0] if current_user.display_name else '?' }}</div>
                 <span class="nav-username">{{ current_user.display_name }}</span>
                 <a href="/logout" class="nav-link">Logout</a>
             </div>

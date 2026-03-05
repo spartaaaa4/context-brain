@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Verify Code - Context Brain{% endblock %}
+{% block content %}
+<div class="login-container">
+    <div class="login-card">
+        <div class="login-header">
+            <span class="login-icon">🔐</span>
+            <h1>Enter Verification Code</h1>
+            <p class="login-desc">We sent a 6-digit code to <strong>{{ email }}</strong></p>
+        </div>
+        {% if error %}
+        <div class="login-error">{{ error }}</div>
+        {% endif %}
+        <form method="POST" action="/verify" class="login-form">
+            <div class="form-group">
+                <label for="code">Verification Code</label>
+                <input type="text" id="code" name="code" placeholder="000000" maxlength="6" pattern="[0-9]{6}" required autofocus autocomplete="one-time-code" class="otp-input">
+            </div>
+            <button type="submit" class="login-btn">Verify & Sign In</button>
+        </form>
+        <div class="login-footer">
+            <p>Didn't receive the code? Check your spam folder or</p>
+            <form method="POST" action="/resend" style="display:inline">
+                <button type="submit" class="resend-btn">Resend Code</button>
+            </form>
+            <p style="margin-top: 12px"><a href="/login" class="back-link">Use a different email</a></p>
+        </div>
+    </div>
+</div>
+{% endblock %}

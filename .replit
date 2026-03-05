@@ -10,6 +10,7 @@ channel = "stable-25_05"
 
 [userenv.shared]
 ADMIN_EMAILS = ""
+ALLOWED_EMAILS = "ardy@myrobin.id,craig@troopers.com.my,debasish.tripathy@gobetter.in,joshua.tan@betterplaceglobal.com,joshua@troopers.com.my,kelvin.lee@betterplaceglobal.com,kelvin@troopers.com.my,kushal.budhia@betterplace.co.in,noel.emmanuel@betterplace.co.in,pallav.bagla@betterplace.co.in,people@betterplace.co.in,prateek.goyal@betterplace.co.in,pravin@betterplace.co.in,pulkita.soni@betterplace.co.in,rajesh.warrier@betterplace.co.in,saurabh.tandon@betterplace.co.in,saurav.chawla@betterplace.co.in,siddharth@myrobin.id,tomonaga.tejima@betterplace.co.in,vijeta.sahani@betterplace.co.in,virag.pant@aasaanjobs.com,vishal.chitravanshi@betterplace.co.in,yokesh.pranav@betterplace.co.in,anuj.saxena@betterplace.co.in"
 
 [workflows]
 runButton = "Project"

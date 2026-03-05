@@ -13,7 +13,7 @@ db.init_app(app)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = "google_auth.login"
+login_manager.login_view = "otp_auth.login"
 
 
 @login_manager.user_loader
@@ -21,17 +21,17 @@ def load_user(user_id):
     return User.query.get(user_id)
 
 
-ADMIN_EMAILS = [e.strip() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
+ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
 
 
 def is_admin(email):
-    return email in ADMIN_EMAILS
+    return email.lower() in ADMIN_EMAILS
 
 
-from google_auth import google_auth
+from otp_auth import otp_auth
 from routes import main_routes, api_routes, admin_routes
 
-app.register_blueprint(google_auth)
+app.register_blueprint(otp_auth)
 app.register_blueprint(main_routes)
 app.register_blueprint(api_routes, url_prefix="/api")
 app.register_blueprint(admin_routes, url_prefix="/admin")
