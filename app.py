@@ -1,7 +1,11 @@
 import os
-from flask import Flask
+import logging
+from flask import Flask, jsonify
 from flask_login import LoginManager
 from models import db, User, Vertical
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
@@ -18,7 +22,11 @@ login_manager.login_view = "otp_auth.login"
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(user_id)
+    try:
+        return db.session.get(User, user_id)
+    except Exception as e:
+        logger.error(f"Error loading user: {e}")
+        return None
 
 
 ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
@@ -87,30 +95,57 @@ SEED_VERTICALS = [
 
 
 def init_db():
-    db.create_all()
-    db.session.execute(db.text("""
-        CREATE TABLE IF NOT EXISTS otp_codes (
-            id SERIAL PRIMARY KEY,
-            email TEXT NOT NULL,
-            code TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TIMESTAMP NOT NULL,
-            used BOOLEAN DEFAULT FALSE
-        )
-    """))
-    db.session.commit()
-    if Vertical.query.count() == 0:
-        for v_data in SEED_VERTICALS:
-            v = Vertical(**v_data)
-            db.session.add(v)
+    try:
+        db.create_all()
+        db.session.execute(db.text("""
+            CREATE TABLE IF NOT EXISTS otp_codes (
+                id SERIAL PRIMARY KEY,
+                email TEXT NOT NULL,
+                code TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                used BOOLEAN DEFAULT FALSE
+            )
+        """))
         db.session.commit()
-        print("[DB] Seeded 6 verticals")
-    else:
-        print(f"[DB] {Vertical.query.count()} verticals already exist")
+        if Vertical.query.count() == 0:
+            for v_data in SEED_VERTICALS:
+                v = Vertical(**v_data)
+                db.session.add(v)
+            db.session.commit()
+            logger.info("[DB] Seeded 6 verticals")
+        else:
+            logger.info(f"[DB] {Vertical.query.count()} verticals already exist")
+    except Exception as e:
+        logger.error(f"[DB] Init error: {e}")
+        db.session.rollback()
+        raise
 
 
 with app.app_context():
     init_db()
+
+
+@app.route("/healthz")
+def healthz():
+    try:
+        db.session.execute(db.text("SELECT 1"))
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        logger.error(f"Healthcheck failed: {e}")
+        return jsonify({"status": "error", "detail": str(e)}), 500
+
+
+@app.errorhandler(500)
+def handle_500(e):
+    logger.error(f"Internal server error: {e}")
+    return jsonify({"error": "Internal server error"}), 500
+
+
+@app.errorhandler(404)
+def handle_404(e):
+    return jsonify({"error": "Not found"}), 404
+
 
 from otp_auth import otp_auth
 from routes import main_routes, api_routes, admin_routes

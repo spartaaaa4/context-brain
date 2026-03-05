@@ -28,8 +28,11 @@ def admin_required(f):
 
 @main_routes.route("/")
 def index():
-    if current_user.is_authenticated:
-        return render_template("dashboard.html")
+    try:
+        if current_user.is_authenticated:
+            return render_template("dashboard.html")
+    except Exception:
+        pass
     return render_template("login.html")
 
 
