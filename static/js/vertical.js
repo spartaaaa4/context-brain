@@ -2,6 +2,7 @@ const VERTICAL_ID = window.VERTICAL_ID;
 const VERTICAL_COLOR = window.VERTICAL_COLOR;
 let currentMapId = null;
 let pendingFile = null;
+let intelligenceData = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
@@ -12,7 +13,6 @@ document.addEventListener('DOMContentLoaded', () => {
     loadChatHistory();
     loadDocuments();
     loadNotes();
-    loadProcessMap();
 });
 
 function initTabs() {
@@ -22,6 +22,9 @@ function initTabs() {
             document.querySelectorAll('.tab-content').forEach(tc => tc.classList.add('hidden'));
             tab.classList.add('active');
             document.getElementById(`tab-${tab.dataset.tab}`).classList.remove('hidden');
+            if (tab.dataset.tab === 'process') {
+                loadIntelligence();
+            }
         });
     });
 }
@@ -426,258 +429,512 @@ async function loadNotes() {
     }
 }
 
-async function loadProcessMap() {
+async function loadIntelligence() {
+    const loading = document.getElementById('intel-loading');
+    const content = document.getElementById('intel-content');
+    const empty = document.getElementById('intel-empty');
+    const stale = document.getElementById('intel-stale-banner');
+
     try {
-        const res = await fetch(`/api/process-map/${VERTICAL_ID}`);
+        const res = await fetch(`/api/intelligence/${VERTICAL_ID}`);
+        if (!res.ok) {
+            if (res.status === 404) {
+                empty.style.display = 'block';
+                content.style.display = 'none';
+                stale.style.display = 'none';
+                return;
+            }
+            throw new Error('Failed to load intelligence');
+        }
         const data = await res.json();
 
-        if (!data) return;
+        if (!data.intelligence) {
+            empty.style.display = 'block';
+            content.style.display = 'none';
+            stale.style.display = 'none';
+            return;
+        }
 
-        currentMapId = data.id;
-        renderProcessMap(data);
+        intelligenceData = data.intelligence;
+        empty.style.display = 'none';
+        content.style.display = 'block';
+
+        if (data.stale) {
+            stale.style.display = 'flex';
+        } else {
+            stale.style.display = 'none';
+        }
+
+        renderIntelligence(data.intelligence);
     } catch (e) {
-        console.error('Failed to load process map:', e);
+        console.error('Failed to load intelligence:', e);
+        empty.style.display = 'block';
+        content.style.display = 'none';
     }
 }
 
-document.getElementById('generate-map-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('generate-map-btn');
-    btn.disabled = true;
-    btn.textContent = 'Generating...';
-    document.getElementById('process-loading').style.display = 'block';
-    document.getElementById('process-content').style.display = 'none';
+window.refreshIntelligence = async function() {
+    const loading = document.getElementById('intel-loading');
+    const content = document.getElementById('intel-content');
+    const empty = document.getElementById('intel-empty');
+    const stale = document.getElementById('intel-stale-banner');
+
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    empty.style.display = 'none';
+    stale.style.display = 'none';
 
     try {
-        const res = await fetch('/api/process-map/generate', {
+        const res = await fetch(`/api/intelligence/${VERTICAL_ID}/refresh`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ verticalId: VERTICAL_ID })
+            headers: { 'Content-Type': 'application/json' }
         });
 
         if (!res.ok) {
             const err = await res.json();
-            alert(err.error || 'Failed to generate process map');
+            alert(err.error || 'Failed to generate intelligence');
+            loading.style.display = 'none';
+            empty.style.display = 'block';
             return;
         }
 
         const data = await res.json();
-        currentMapId = data.id;
-        renderProcessMap(data);
+        intelligenceData = data.intelligence;
+        loading.style.display = 'none';
+        content.style.display = 'block';
+        renderIntelligence(data.intelligence);
     } catch (e) {
-        alert('Failed to generate process map. Please try again.');
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Refresh Process Map';
-        document.getElementById('process-loading').style.display = 'none';
+        alert('Failed to generate intelligence. Please try again.');
+        loading.style.display = 'none';
+        empty.style.display = 'block';
     }
-});
+};
 
-function renderProcessMap(data) {
-    const content = document.getElementById('process-content');
-    content.style.display = 'block';
+function renderIntelligence(data) {
+    renderBusinessProfile(data.businessProfile || {});
+    renderKnowledgeGaps(data.knowledgeGaps || []);
+    renderProcessMap(data.processMap || {});
+    renderPainPoints(data.painPoints || []);
+    renderTeamStructure(data.team || []);
+    renderToolsInventory(data.tools || []);
+    renderContextCoverage(data.coverage || {});
+}
 
-    const mapData = data.map_data;
-    if (!mapData || typeof mapData !== 'object') return;
+function profileFieldLabel(key) {
+    const labels = {
+        whatTheyDo: 'What They Do',
+        businessModel: 'Business Model',
+        geography: 'Geography',
+        scale: 'Scale',
+        keyClients: 'Key Clients',
+        teamSize: 'Team Size',
+        primaryLanguages: 'Primary Languages',
+        communicationChannels: 'Communication Channels'
+    };
+    return labels[key] || key;
+}
 
-    const bo = mapData.businessOverview;
-    if (bo) {
-        document.getElementById('business-overview').innerHTML = `
-            <h2>Business Overview</h2>
-            ${bo.summary ? `<div class="overview-section"><h3>About</h3><p>${escapeHtml(bo.summary)}</p></div>` : ''}
-            ${bo.businessModel ? `<div class="overview-section"><h3>Business Model</h3><p>${escapeHtml(bo.businessModel)}</p></div>` : ''}
-            ${bo.scale ? `<div class="overview-section"><h3>Scale & Metrics</h3>
-                <p>${bo.scale.workers ? `Workers: ${escapeHtml(bo.scale.workers)}` : ''} ${bo.scale.clients ? `| Clients: ${escapeHtml(bo.scale.clients)}` : ''} ${bo.scale.volume ? `| Volume: ${escapeHtml(bo.scale.volume)}` : ''}</p>
-            </div>` : ''}
-            ${bo.teamStructure ? `<div class="overview-section"><h3>Team Structure</h3><p>${escapeHtml(bo.teamStructure)}</p></div>` : ''}
-            ${bo.toolsAndSystems && bo.toolsAndSystems.length ? `<div class="overview-section"><h3>Tools & Systems</h3><p>${bo.toolsAndSystems.map(t => escapeHtml(t)).join(', ')}</p></div>` : ''}
+function renderBusinessProfile(profile) {
+    const container = document.getElementById('intel-business-profile');
+    const fields = ['whatTheyDo', 'businessModel', 'geography', 'scale', 'keyClients', 'teamSize', 'primaryLanguages', 'communicationChannels'];
+
+    const fieldsHtml = fields.map(field => {
+        const value = profile[field];
+        const displayValue = value ? escapeHtml(String(value)) : '<span class="intel-muted">Not yet captured</span>';
+        return `
+            <div class="intel-profile-field" data-field="${field}">
+                <div class="intel-profile-label">${profileFieldLabel(field)}</div>
+                <div class="intel-profile-value" id="profile-val-${field}">${displayValue}</div>
+                <button class="intel-edit-btn" onclick="editBusinessField('${field}', ${value ? "'" + escapeHtml(String(value)).replace(/'/g, "\\'") + "'" : 'null'})" title="Edit">✏️</button>
+            </div>
         `;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="intel-card-header">
+            <h3>📋 Business Profile</h3>
+        </div>
+        <div class="intel-profile-grid">${fieldsHtml}</div>
+    `;
+}
+
+function renderKnowledgeGaps(gaps) {
+    const container = document.getElementById('intel-knowledge-gaps');
+    if (!gaps || !gaps.length) {
+        container.innerHTML = `
+            <div class="intel-card-header"><h3>❓ Knowledge Gaps</h3></div>
+            <p class="intel-muted">No knowledge gaps identified yet.</p>
+        `;
+        return;
     }
 
-    const pm = mapData.processMap;
-    if (pm && pm.steps) {
-        const stepsHtml = pm.steps.map((step, idx) => {
-            const painClass = `pain-${step.painLevel || 'low'}`;
-            const autoClass = `automation-${step.automationPotential || 'low'}`;
-
-            const existingFeedback = (data.feedback || []).filter(f => f.step_number === step.stepNumber);
-            const feedbackHtml = existingFeedback.map(f => `
-                <div class="existing-feedback">
-                    <span class="fb-type ${f.feedback_type}">${f.feedback_type.replace('_', ' ')}</span>
-                    ${f.content ? escapeHtml(f.content) : ''}
-                    <span style="color:var(--text-muted);font-size:11px;margin-left:8px;">${f.user_name}</span>
+    const gapsHtml = gaps.map((gap, idx) => {
+        const question = typeof gap === 'string' ? gap : (gap.question || gap);
+        const answered = gap.answered || false;
+        return `
+            <div class="intel-gap-item ${answered ? 'answered' : ''}" id="gap-item-${idx}">
+                <div class="intel-gap-row">
+                    <span class="intel-gap-check">${answered ? '☑' : '☐'}</span>
+                    <span class="intel-gap-question">${escapeHtml(String(question))}</span>
                 </div>
-            `).join('');
+                <div class="intel-gap-actions">
+                    <button class="intel-gap-answer-btn" onclick="toggleGapAnswer(${idx})">Answer Inline</button>
+                    <a href="#" class="intel-gap-chat-link" onclick="discussInChat('${escapeHtml(String(question)).replace(/'/g, "\\'")}'); return false;">Discuss in Chat</a>
+                </div>
+                <div class="intel-gap-answer-form" id="gap-answer-${idx}" style="display:none">
+                    <textarea id="gap-textarea-${idx}" placeholder="Type your answer..." rows="2"></textarea>
+                    <button class="primary-btn" style="background:${VERTICAL_COLOR};padding:6px 14px;font-size:12px" onclick="answerKnowledgeGap(${idx}, '${escapeHtml(String(question)).replace(/'/g, "\\'")}')">Save Answer</button>
+                </div>
+            </div>
+        `;
+    }).join('');
 
+    container.innerHTML = `
+        <div class="intel-card-header"><h3>❓ Knowledge Gaps</h3></div>
+        ${gapsHtml}
+    `;
+}
+
+function renderProcessMap(processMap) {
+    const container = document.getElementById('intel-process-map');
+    const steps = processMap.steps || [];
+
+    if (!steps.length) {
+        container.innerHTML = `
+            <div class="intel-card-header"><h3>🗺️ Process Map</h3></div>
+            <p class="intel-muted">No process steps identified yet. Add more context to generate a process map.</p>
+        `;
+        return;
+    }
+
+    const stepsHtml = steps.map((step, idx) => {
+        const painLevel = (step.painLevel || 'low').toLowerCase();
+        const painBorderClass = `intel-pain-${painLevel}`;
+        const autoPotential = (step.automationPotential || 'low').toLowerCase();
+        const autoClass = `intel-auto-${autoPotential}`;
+        const confidence = step.confidence || 'medium';
+        const stepNum = step.stepNumber || (idx + 1);
+
+        return `
+            ${idx > 0 ? '<div class="connector"><div class="connector-line"></div></div>' : ''}
+            <div class="intel-step-card ${painBorderClass}">
+                <div class="intel-step-header">
+                    <div class="intel-step-number" style="background:${VERTICAL_COLOR}22;color:${VERTICAL_COLOR}">${stepNum}</div>
+                    <div class="intel-step-name">${escapeHtml(step.name || '')}</div>
+                    <span class="intel-confidence-tag confidence-${confidence}">${confidence}</span>
+                </div>
+                <div class="intel-step-desc">${escapeHtml(step.description || '')}</div>
+                <div class="intel-step-badges">
+                    ${step.owner ? `<span class="intel-badge">👤 ${escapeHtml(step.owner)}</span>` : ''}
+                    ${step.toolsUsed && step.toolsUsed.length ? `<span class="intel-badge">🔧 ${step.toolsUsed.map(t => escapeHtml(t)).join(', ')}</span>` : ''}
+                    ${step.estimatedTime ? `<span class="intel-badge">⏱ ${escapeHtml(step.estimatedTime)}</span>` : ''}
+                    ${step.volume ? `<span class="intel-badge">📊 ${escapeHtml(step.volume)}</span>` : ''}
+                    <span class="intel-auto-badge ${autoClass}">⚡ ${autoPotential} automation</span>
+                </div>
+                ${step.automationIdea ? `<p class="intel-step-idea">💡 ${escapeHtml(step.automationIdea)}</p>` : ''}
+                <div class="intel-step-feedback">
+                    <button class="intel-fb-btn intel-fb-correct" onclick="submitIntelStepFeedback(${stepNum}, 'correct')">✓ Correct</button>
+                    <button class="intel-fb-btn intel-fb-partial" onclick="showIntelFeedbackForm(${stepNum}, 'partially_correct')">⚠ Partially Right</button>
+                    <button class="intel-fb-btn intel-fb-wrong" onclick="showIntelFeedbackForm(${stepNum}, 'wrong')">✗ Wrong</button>
+                </div>
+                <div class="intel-fb-form" id="intel-fb-form-${stepNum}" style="display:none">
+                    <textarea id="intel-fb-input-${stepNum}" placeholder="What needs correction?" rows="2"></textarea>
+                    <button class="primary-btn" style="background:${VERTICAL_COLOR};padding:6px 14px;font-size:12px" onclick="submitIntelStepFeedbackWithText(${stepNum})">Submit</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="intel-card-header"><h3>🗺️ Process Map</h3><span class="intel-card-subtitle">${escapeHtml(processMap.processName || '')}</span></div>
+        ${stepsHtml}
+    `;
+}
+
+function renderPainPoints(painPoints) {
+    const container = document.getElementById('intel-pain-points');
+    if (!painPoints || !painPoints.length) {
+        container.innerHTML = `
+            <div class="intel-card-header"><h3>🔥 Pain Points</h3></div>
+            <p class="intel-muted">No pain points identified yet.</p>
+        `;
+        return;
+    }
+
+    const sorted = [...painPoints].sort((a, b) => {
+        const order = { high: 0, medium: 1, low: 2 };
+        return (order[(a.severity || 'low').toLowerCase()] || 2) - (order[(b.severity || 'low').toLowerCase()] || 2);
+    });
+
+    const painHtml = sorted.map((pp, idx) => {
+        const severity = (pp.severity || 'medium').toLowerCase();
+        const severityColors = { high: '#DC2626', medium: '#D97706', low: '#059669' };
+        const borderColor = severityColors[severity] || severityColors.medium;
+
+        return `
+            <div class="intel-pain-card" style="border-left: 3px solid ${borderColor}">
+                <div class="intel-pain-header">
+                    <span class="intel-pain-title">${escapeHtml(pp.title || pp.name || 'Pain Point ' + (idx + 1))}</span>
+                    <span class="intel-severity-badge severity-${severity}">${severity}</span>
+                </div>
+                ${pp.description ? `<p class="intel-pain-desc">${escapeHtml(pp.description)}</p>` : ''}
+                <div class="intel-pain-details">
+                    ${pp.currentEffort ? `<div class="intel-pain-detail"><span class="intel-detail-label">Current Effort:</span> ${escapeHtml(pp.currentEffort)}</div>` : ''}
+                    ${pp.affectedProcess ? `<div class="intel-pain-detail"><span class="intel-detail-label">Affected Process:</span> ${escapeHtml(pp.affectedProcess)}</div>` : ''}
+                    ${pp.automationIdea ? `<div class="intel-pain-detail"><span class="intel-detail-label">Automation Idea:</span> ${escapeHtml(pp.automationIdea)}</div>` : ''}
+                    ${pp.expectedImpact ? `<div class="intel-pain-detail"><span class="intel-detail-label">Expected Impact:</span> ${escapeHtml(pp.expectedImpact)}</div>` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="intel-card-header"><h3>🔥 Pain Points</h3></div>
+        ${painHtml}
+    `;
+}
+
+function renderTeamStructure(team) {
+    const container = document.getElementById('intel-team-structure');
+    if (!team || !team.length) {
+        container.innerHTML = `
+            <div class="intel-card-header"><h3>👥 Team & Org Structure</h3></div>
+            <p class="intel-muted">No team information captured yet.</p>
+        `;
+        return;
+    }
+
+    const rows = team.map(member => `
+        <tr>
+            <td>${escapeHtml(member.role || '')}</td>
+            <td>${member.headcount != null ? escapeHtml(String(member.headcount)) : '-'}</td>
+            <td>${escapeHtml(member.responsibilities || '')}</td>
+            <td>${Array.isArray(member.processSteps) ? member.processSteps.map(s => escapeHtml(s)).join(', ') : escapeHtml(member.processSteps || '')}</td>
+        </tr>
+    `).join('');
+
+    container.innerHTML = `
+        <div class="intel-card-header"><h3>👥 Team & Org Structure</h3></div>
+        <div class="intel-table-wrap">
+            <table class="intel-table">
+                <thead><tr><th>Role</th><th>Headcount</th><th>Responsibilities</th><th>Process Steps</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function renderToolsInventory(tools) {
+    const container = document.getElementById('intel-tools-inventory');
+    if (!tools || !tools.length) {
+        container.innerHTML = `
+            <div class="intel-card-header"><h3>🛠️ Tools & Systems</h3></div>
+            <p class="intel-muted">No tools or systems captured yet.</p>
+        `;
+        return;
+    }
+
+    const rows = tools.map(tool => `
+        <tr>
+            <td>${escapeHtml(tool.name || '')}</td>
+            <td>${escapeHtml(tool.type || '')}</td>
+            <td>${Array.isArray(tool.usedIn) ? tool.usedIn.map(s => escapeHtml(s)).join(', ') : escapeHtml(tool.usedIn || '')}</td>
+            <td>${Array.isArray(tool.usedBy) ? tool.usedBy.map(s => escapeHtml(s)).join(', ') : escapeHtml(tool.usedBy || '')}</td>
+        </tr>
+    `).join('');
+
+    container.innerHTML = `
+        <div class="intel-card-header"><h3>🛠️ Tools & Systems</h3></div>
+        <div class="intel-table-wrap">
+            <table class="intel-table">
+                <thead><tr><th>Name</th><th>Type</th><th>Used In</th><th>Used By</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function renderContextCoverage(coverage) {
+    const container = document.getElementById('intel-context-coverage');
+    if (!coverage || !Object.keys(coverage).length) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const topics = coverage.topics || [];
+    const overallPct = coverage.overall || 0;
+
+    let topicsHtml = '';
+    if (topics.length) {
+        topicsHtml = topics.map(t => {
+            const pct = t.percentage || 0;
+            const captured = t.captured || false;
             return `
-                ${idx > 0 ? '<div class="connector"><div class="connector-line"></div></div>' : ''}
-                <div class="process-step ${painClass}">
-                    <div class="step-header">
-                        <div class="step-number">${step.stepNumber}</div>
-                        <div class="step-name">${escapeHtml(step.name || '')}</div>
+                <div class="intel-coverage-topic">
+                    <div class="intel-coverage-topic-row">
+                        <span>${captured ? '✅' : '⬜'} ${escapeHtml(t.name || t.topic || '')}</span>
+                        <span class="intel-coverage-pct">${pct}%</span>
                     </div>
-                    <div class="step-description">${escapeHtml(step.description || '')}</div>
-                    ${step.confidence === 'low' ? '<div class="low-confidence">&#9888; Low confidence — inferred from available data</div>' : ''}
-                    <div class="step-meta">
-                        ${step.owner ? `<span class="step-tag">Owner: ${escapeHtml(step.owner)}</span>` : ''}
-                        ${step.toolsUsed && step.toolsUsed.length ? `<span class="step-tag">Tools: ${step.toolsUsed.map(t => escapeHtml(t)).join(', ')}</span>` : ''}
-                        ${step.estimatedTime ? `<span class="step-tag">Time: ${escapeHtml(step.estimatedTime)}</span>` : ''}
-                        <span class="step-tag ${autoClass}">Automation: ${step.automationPotential || 'unknown'}</span>
-                    </div>
-                    ${step.automationIdea ? `<p style="font-size:12px;color:var(--text-muted);margin-top:4px">💡 ${escapeHtml(step.automationIdea)}</p>` : ''}
-                    <div class="step-feedback-buttons">
-                        <button class="fb-btn correct" onclick="submitStepFeedback(${step.stepNumber}, 'correct')">&#10003; Correct</button>
-                        <button class="fb-btn partial" onclick="showFeedbackForm(${step.stepNumber}, 'partially_correct')">&#9888; Partially Correct</button>
-                        <button class="fb-btn wrong" onclick="showFeedbackForm(${step.stepNumber}, 'wrong')">&#10007; Wrong</button>
-                        <button class="fb-btn" onclick="showFeedbackForm(${step.stepNumber}, 'comment')">Comment</button>
-                    </div>
-                    <div id="fb-form-${step.stepNumber}" style="display:none">
-                        <div class="feedback-form">
-                            <input type="text" id="fb-input-${step.stepNumber}" placeholder="Your feedback...">
-                            <button onclick="submitStepFeedbackWithText(${step.stepNumber})">Submit</button>
-                        </div>
-                    </div>
-                    ${feedbackHtml}
+                    <div class="intel-coverage-bar-bg"><div class="intel-coverage-bar-fill" style="width:${pct}%;background:${VERTICAL_COLOR}"></div></div>
                 </div>
             `;
         }).join('');
-
-        document.getElementById('process-map-display').innerHTML = `
-            <h2 style="margin:24px 0 16px">${escapeHtml(pm.processName || 'Process Map')}</h2>
-            ${stepsHtml}
-            <div class="missing-step-area">
-                <button class="missing-step-btn" onclick="showMissingStepForm()">+ Add Missing Step</button>
-                <div id="missing-step-form" style="display:none;margin-top:12px">
-                    <div class="feedback-form">
-                        <input type="text" id="missing-step-input" placeholder="Describe the missing step...">
-                        <button onclick="submitMissingStep()">Submit</button>
-                    </div>
-                </div>
-            </div>
-            <div class="general-feedback-area">
-                <h3>General Feedback</h3>
-                <div class="general-feedback-row">
-                    <textarea id="general-feedback-text" placeholder="Any overall comments about this process map..."></textarea>
-                    <button class="primary-btn" style="background:${VERTICAL_COLOR}" onclick="submitGeneralFeedback()">Submit</button>
-                </div>
-            </div>
-        `;
     }
 
-    const gaps = mapData.knowledgeGaps;
-    if (gaps && gaps.length) {
-        document.getElementById('knowledge-gaps').innerHTML = `
-            <div class="knowledge-gaps-card">
-                <h2>Knowledge Gaps</h2>
-                ${gaps.map(g => `
-                    <div class="gap-item">
-                        <span class="gap-checkbox">&#9744;</span>
-                        <span>${escapeHtml(g)}</span>
-                    </div>
-                `).join('')}
+    container.innerHTML = `
+        <div class="intel-card-header"><h3>📊 Context Coverage</h3></div>
+        <div class="intel-coverage-overall">
+            <div class="intel-coverage-overall-row">
+                <span>Overall Coverage</span>
+                <span class="intel-coverage-pct">${overallPct}%</span>
             </div>
-        `;
-    }
-
-    const targets = mapData.topAutomationTargets;
-    if (targets && targets.length) {
-        document.getElementById('automation-targets').innerHTML = `
-            <div class="automation-card">
-                <h2>Top Automation Targets</h2>
-                ${targets.map(t => `
-                    <div class="automation-target">
-                        <h4>${escapeHtml(t.target || '')} <span class="priority-badge ${t.priority || 'medium'}">${t.priority || 'medium'}</span></h4>
-                        ${t.currentCost ? `<p><strong>Current Cost:</strong> ${escapeHtml(t.currentCost)}</p>` : ''}
-                        ${t.automationApproach ? `<p><strong>Approach:</strong> ${escapeHtml(t.automationApproach)}</p>` : ''}
-                        ${t.expectedImpact ? `<p><strong>Expected Impact:</strong> ${escapeHtml(t.expectedImpact)}</p>` : ''}
-                    </div>
-                `).join('')}
-            </div>
-        `;
-    }
+            <div class="intel-coverage-bar-bg large"><div class="intel-coverage-bar-fill" style="width:${overallPct}%;background:${VERTICAL_COLOR}"></div></div>
+        </div>
+        ${topicsHtml}
+    `;
 }
 
-let currentFeedbackType = '';
+let currentIntelFeedbackType = '';
 
-window.showFeedbackForm = function(stepNumber, type) {
-    currentFeedbackType = type;
-    const form = document.getElementById(`fb-form-${stepNumber}`);
+window.showIntelFeedbackForm = function(stepNumber, type) {
+    currentIntelFeedbackType = type;
+    const form = document.getElementById(`intel-fb-form-${stepNumber}`);
     form.style.display = form.style.display === 'none' ? 'block' : 'none';
-    const input = document.getElementById(`fb-input-${stepNumber}`);
+    const input = document.getElementById(`intel-fb-input-${stepNumber}`);
     if (input) input.focus();
 };
 
-window.submitStepFeedback = async function(stepNumber, type) {
-    if (!currentMapId) return;
+window.submitIntelStepFeedback = async function(stepNumber, type) {
     try {
-        await fetch(`/api/process-map/${currentMapId}/feedback`, {
+        await fetch(`/api/intelligence/${VERTICAL_ID}/feedback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stepNumber, feedbackType: type, content: '' })
+            body: JSON.stringify({ section: 'processMap', field_path: `step.${stepNumber}`, feedback_type: type })
         });
-        document.getElementById('feedback-banner').style.display = 'block';
-        setTimeout(() => { document.getElementById('feedback-banner').style.display = 'none'; }, 5000);
-    } catch (e) {}
+        const banner = document.getElementById('intel-feedback-banner');
+        banner.style.display = 'block';
+        setTimeout(() => { banner.style.display = 'none'; }, 5000);
+    } catch (e) {
+        console.error('Feedback error:', e);
+    }
 };
 
-window.submitStepFeedbackWithText = async function(stepNumber) {
-    if (!currentMapId) return;
-    const input = document.getElementById(`fb-input-${stepNumber}`);
+window.submitIntelStepFeedbackWithText = async function(stepNumber) {
+    const input = document.getElementById(`intel-fb-input-${stepNumber}`);
     const content = input ? input.value.trim() : '';
     if (!content) return;
 
     try {
-        await fetch(`/api/process-map/${currentMapId}/feedback`, {
+        await fetch(`/api/intelligence/${VERTICAL_ID}/feedback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stepNumber, feedbackType: currentFeedbackType, content })
+            body: JSON.stringify({ section: 'processMap', field_path: `step.${stepNumber}`, feedback_type: currentIntelFeedbackType, corrected_value: content })
         });
         if (input) input.value = '';
-        document.getElementById(`fb-form-${stepNumber}`).style.display = 'none';
-        document.getElementById('feedback-banner').style.display = 'block';
-        setTimeout(() => { document.getElementById('feedback-banner').style.display = 'none'; }, 5000);
-    } catch (e) {}
+        document.getElementById(`intel-fb-form-${stepNumber}`).style.display = 'none';
+        const banner = document.getElementById('intel-feedback-banner');
+        banner.style.display = 'block';
+        setTimeout(() => { banner.style.display = 'none'; }, 5000);
+    } catch (e) {
+        console.error('Feedback error:', e);
+    }
 };
 
-window.showMissingStepForm = function() {
-    const form = document.getElementById('missing-step-form');
-    form.style.display = form.style.display === 'none' ? 'block' : 'none';
-};
-
-window.submitMissingStep = async function() {
-    if (!currentMapId) return;
-    const input = document.getElementById('missing-step-input');
-    const content = input.value.trim();
-    if (!content) return;
-
+window.submitIntelFeedback = async function(section, fieldPath, type, originalValue) {
     try {
-        await fetch(`/api/process-map/${currentMapId}/feedback`, {
+        await fetch(`/api/intelligence/${VERTICAL_ID}/feedback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stepNumber: null, feedbackType: 'missing_step', content })
+            body: JSON.stringify({ section, field_path: fieldPath, feedback_type: type, original_value: originalValue })
         });
-        input.value = '';
-        document.getElementById('missing-step-form').style.display = 'none';
-        document.getElementById('feedback-banner').style.display = 'block';
-        setTimeout(() => { document.getElementById('feedback-banner').style.display = 'none'; }, 5000);
-    } catch (e) {}
+        const banner = document.getElementById('intel-feedback-banner');
+        banner.style.display = 'block';
+        setTimeout(() => { banner.style.display = 'none'; }, 5000);
+    } catch (e) {
+        console.error('Feedback error:', e);
+    }
 };
 
-window.submitGeneralFeedback = async function() {
-    if (!currentMapId) return;
-    const textarea = document.getElementById('general-feedback-text');
-    const content = textarea.value.trim();
-    if (!content) return;
+window.editBusinessField = async function(field, currentValue) {
+    const valEl = document.getElementById(`profile-val-${field}`);
+    if (!valEl) return;
+
+    if (valEl.querySelector('textarea')) return;
+
+    const oldContent = valEl.innerHTML;
+    valEl.innerHTML = `
+        <textarea class="intel-inline-edit" id="edit-field-${field}" rows="2">${currentValue ? escapeHtml(String(currentValue)) : ''}</textarea>
+        <div class="intel-inline-edit-actions">
+            <button class="primary-btn" style="background:${VERTICAL_COLOR};padding:4px 12px;font-size:12px" onclick="saveBusinessField('${field}')">Save</button>
+            <button class="secondary-btn" style="padding:4px 12px;font-size:12px" onclick="cancelEditField('${field}', \`${oldContent.replace(/`/g, '\\`')}\`)">Cancel</button>
+        </div>
+    `;
+    document.getElementById(`edit-field-${field}`).focus();
+};
+
+window.saveBusinessField = async function(field) {
+    const textarea = document.getElementById(`edit-field-${field}`);
+    if (!textarea) return;
+    const newValue = textarea.value.trim();
 
     try {
-        await fetch(`/api/process-map/${currentMapId}/feedback`, {
+        await fetch(`/api/intelligence/${VERTICAL_ID}/business-profile`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ field: field, value: newValue })
+        });
+        const valEl = document.getElementById(`profile-val-${field}`);
+        valEl.innerHTML = newValue ? escapeHtml(newValue) : '<span class="intel-muted">Not yet captured</span>';
+    } catch (e) {
+        console.error('Save error:', e);
+        alert('Failed to save. Please try again.');
+    }
+};
+
+window.cancelEditField = function(field, oldContent) {
+    const valEl = document.getElementById(`profile-val-${field}`);
+    if (valEl) valEl.innerHTML = oldContent;
+};
+
+window.toggleGapAnswer = function(idx) {
+    const form = document.getElementById(`gap-answer-${idx}`);
+    form.style.display = form.style.display === 'none' ? 'block' : 'none';
+    if (form.style.display === 'block') {
+        document.getElementById(`gap-textarea-${idx}`).focus();
+    }
+};
+
+window.answerKnowledgeGap = async function(idx, question) {
+    const textarea = document.getElementById(`gap-textarea-${idx}`);
+    if (!textarea) return;
+    const answer = textarea.value.trim();
+    if (!answer) return;
+
+    try {
+        await fetch('/api/notes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stepNumber: null, feedbackType: 'comment', content })
+            body: JSON.stringify({ verticalId: VERTICAL_ID, content: `[Knowledge Gap Answer] Q: ${question}\nA: ${answer}`, category: 'other' })
         });
         textarea.value = '';
-        document.getElementById('feedback-banner').style.display = 'block';
-        setTimeout(() => { document.getElementById('feedback-banner').style.display = 'none'; }, 5000);
-    } catch (e) {}
+        document.getElementById(`gap-answer-${idx}`).style.display = 'none';
+        const item = document.getElementById(`gap-item-${idx}`);
+        if (item) item.classList.add('answered');
+        const check = item.querySelector('.intel-gap-check');
+        if (check) check.textContent = '☑';
+    } catch (e) {
+        console.error('Answer error:', e);
+    }
+};
+
+window.discussInChat = function(question) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.add('hidden'));
+    document.querySelector('[data-tab="chat"]').classList.add('active');
+    document.getElementById('tab-chat').classList.remove('hidden');
+    const chatInput = document.getElementById('chat-input');
+    chatInput.value = `Regarding: "${question}" — `;
+    chatInput.focus();
 };
 
 function escapeHtml(text) {

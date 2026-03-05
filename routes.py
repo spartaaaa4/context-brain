@@ -3,10 +3,12 @@ import json
 import time
 import zipfile
 import io
+import random
+import base64
 from datetime import datetime
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, send_file, send_from_directory, current_app
 from flask_login import login_required, current_user
-from models import db, User, Vertical, Message, Document, Note, ProcessMap, ProcessMapFeedback
+from models import db, User, Vertical, Message, Document, Note, ProcessMap, ProcessMapFeedback, VerticalIntelligence, IntelligenceFeedback
 from functools import wraps
 
 main_routes = Blueprint("main", __name__)
@@ -38,7 +40,7 @@ def index():
 
 @main_routes.route("/login_page")
 def login_page():
-    return redirect(url_for("otp_auth.login"))
+    return redirect(url_for("pin_auth.login"))
 
 
 @main_routes.route("/vertical/<vertical_id>")
@@ -237,10 +239,14 @@ def upload_document():
     upload_dir = os.path.join("uploads", vertical_id)
     os.makedirs(upload_dir, exist_ok=True)
 
+    file_content = file.read()
+    file_data_b64 = base64.b64encode(file_content).decode('utf-8')
+
     safe_filename = f"{int(time.time())}_{file.filename}"
     file_path = os.path.join(upload_dir, safe_filename)
-    file.save(file_path)
-    file_size = os.path.getsize(file_path)
+    with open(file_path, 'wb') as f:
+        f.write(file_content)
+    file_size = len(file_content)
 
     doc = Document(
         vertical_id=vertical_id,
@@ -249,6 +255,7 @@ def upload_document():
         file_type=file_type,
         file_path=file_path,
         file_size=file_size,
+        file_data=file_data_b64,
         doc_type=doc_type,
         user_description=description,
         processing_status='pending'
@@ -297,6 +304,40 @@ def get_documents(vertical_id):
             "created_at": doc.created_at.isoformat()
         })
     return jsonify(result)
+
+
+@api_routes.route("/documents/<int:doc_id>/download")
+@login_required
+def download_document(doc_id):
+    doc = Document.query.get(doc_id)
+    if not doc:
+        return jsonify({"error": "Document not found"}), 404
+
+    content_type_map = {
+        'pdf': 'application/pdf',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'txt': 'text/plain',
+        'csv': 'text/csv',
+        'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'image': 'image/jpeg',
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+    }
+    content_type = content_type_map.get(doc.file_type, 'application/octet-stream')
+
+    if doc.file_data:
+        file_bytes = base64.b64decode(doc.file_data)
+        return send_file(
+            io.BytesIO(file_bytes),
+            mimetype=content_type,
+            as_attachment=True,
+            download_name=doc.filename
+        )
+    elif doc.file_path and os.path.exists(doc.file_path):
+        return send_file(doc.file_path, mimetype=content_type, as_attachment=True, download_name=doc.filename)
+    else:
+        return jsonify({"error": "File not available"}), 404
 
 
 @api_routes.route("/documents/<int:doc_id>/status")
@@ -461,6 +502,111 @@ def submit_feedback(map_id):
     })
 
 
+@api_routes.route("/intelligence/<vertical_id>")
+@login_required
+def get_intelligence(vertical_id):
+    from ai_service import compute_context_hash
+    vertical = Vertical.query.get(vertical_id)
+    if not vertical:
+        return jsonify({"error": "Vertical not found"}), 404
+
+    cached = VerticalIntelligence.query.filter_by(
+        vertical_id=vertical_id
+    ).order_by(VerticalIntelligence.generated_at.desc()).first()
+
+    current_hash = compute_context_hash(vertical_id)
+    stale = not cached or cached.context_hash != current_hash
+
+    msg_count = Message.query.filter_by(vertical_id=vertical_id).count()
+    doc_count = Document.query.filter_by(vertical_id=vertical_id, processing_status='done').count()
+    note_count = Note.query.filter_by(vertical_id=vertical_id).count()
+
+    result = {
+        "has_context": msg_count > 0 or doc_count > 0 or note_count > 0,
+        "context_stats": {"messages": msg_count, "documents": doc_count, "notes": note_count},
+        "stale": stale,
+        "intelligence": None,
+        "generated_at": None,
+    }
+
+    if cached:
+        try:
+            result["intelligence"] = json.loads(cached.intelligence_data)
+        except (json.JSONDecodeError, TypeError):
+            result["intelligence"] = cached.intelligence_data
+        result["generated_at"] = cached.generated_at.isoformat()
+
+    return jsonify(result)
+
+
+@api_routes.route("/intelligence/<vertical_id>/refresh", methods=["POST"])
+@login_required
+def refresh_intelligence(vertical_id):
+    from ai_service import generate_intelligence
+    vertical = Vertical.query.get(vertical_id)
+    if not vertical:
+        return jsonify({"error": "Vertical not found"}), 404
+
+    try:
+        intel = generate_intelligence(vertical_id, current_user.id, force=True)
+        if not intel:
+            return jsonify({"error": "No context available to analyze"}), 400
+
+        try:
+            data = json.loads(intel.intelligence_data)
+        except (json.JSONDecodeError, TypeError):
+            data = intel.intelligence_data
+
+        return jsonify({
+            "intelligence": data,
+            "generated_at": intel.generated_at.isoformat(),
+            "stale": False,
+        })
+    except Exception as e:
+        return jsonify({"error": f"Intelligence generation failed: {str(e)}"}), 500
+
+
+@api_routes.route("/intelligence/<vertical_id>/feedback", methods=["POST"])
+@login_required
+def submit_intelligence_feedback(vertical_id):
+    data = request.json
+    fb = IntelligenceFeedback(
+        vertical_id=vertical_id,
+        user_id=current_user.id,
+        section=data.get("section", "general"),
+        field_path=data.get("field_path"),
+        feedback_type=data.get("feedback_type", "comment"),
+        original_value=data.get("original_value"),
+        corrected_value=data.get("corrected_value"),
+        comment=data.get("comment"),
+    )
+    db.session.add(fb)
+    db.session.commit()
+    return jsonify({"id": fb.id, "status": "saved"})
+
+
+@api_routes.route("/intelligence/<vertical_id>/business-profile", methods=["PUT"])
+@login_required
+def update_business_profile_field(vertical_id):
+    data = request.json
+    field = data.get("field")
+    value = data.get("value")
+    if not field or value is None:
+        return jsonify({"error": "field and value required"}), 400
+
+    fb = IntelligenceFeedback(
+        vertical_id=vertical_id,
+        user_id=current_user.id,
+        section="business_profile",
+        field_path=f"businessProfile.{field}",
+        feedback_type="edit",
+        corrected_value=value,
+    )
+    db.session.add(fb)
+    db.session.commit()
+    return jsonify({"status": "saved"})
+
+
 @admin_routes.route("/api/overview")
 @admin_required
 def admin_overview():
@@ -516,6 +662,70 @@ def admin_overview():
             "notes": total_notes
         }
     })
+
+
+@admin_routes.route("/api/users")
+@admin_required
+def admin_get_users():
+    users = User.query.order_by(User.created_at.desc()).all()
+    from app import is_admin
+    result = []
+    for u in users:
+        result.append({
+            "email": u.email,
+            "display_name": u.display_name,
+            "pin": u.pin,
+            "is_admin": is_admin(u.email),
+            "last_active_at": u.last_active_at.isoformat() if u.last_active_at else None,
+            "created_at": u.created_at.isoformat() if u.created_at else None
+        })
+    return jsonify(result)
+
+
+@admin_routes.route("/api/users", methods=["POST"])
+@admin_required
+def admin_add_user():
+    data = request.json
+    email = data.get("email", "").strip().lower()
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+    existing = User.query.filter_by(email=email).first()
+    if existing:
+        return jsonify({"error": "User already exists"}), 409
+    pin = str(random.randint(1000, 9999))
+    name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+    import uuid
+    user = User(
+        id=str(uuid.uuid4()),
+        email=email,
+        display_name=name,
+        pin=pin
+    )
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({"email": user.email, "display_name": user.display_name, "pin": user.pin}), 201
+
+
+@admin_routes.route("/api/users/<path:email>/pin", methods=["PUT"])
+@admin_required
+def admin_regen_pin(email):
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    user.pin = str(random.randint(1000, 9999))
+    db.session.commit()
+    return jsonify({"email": user.email, "pin": user.pin})
+
+
+@admin_routes.route("/api/users/<path:email>", methods=["DELETE"])
+@admin_required
+def admin_delete_user(email):
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({"deleted": True})
 
 
 @admin_routes.route("/api/vertical/<vertical_id>")

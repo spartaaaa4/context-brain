@@ -56,7 +56,7 @@
                 <div class="upload-dropzone" id="dropzone">
                     <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                     <p>Drag & drop files here or <button class="upload-browse" onclick="document.getElementById('file-input').click()">browse</button></p>
-                    <p class="upload-hint">PDF, DOCX, TXT, PNG, JPG, CSV, XLSX (max 10MB)</p>
+                    <p class="upload-hint">PDF, DOCX, TXT, PNG, JPG, CSV, XLSX (max 50MB)</p>
                     <input type="file" id="file-input" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.csv,.xlsx" style="display:none">
                 </div>
             </div>
@@ -88,25 +88,35 @@
         </div>
     </div>
     <div class="tab-content hidden" id="tab-process">
-        <div class="process-section">
-            <div class="process-actions">
-                <button id="generate-map-btn" class="generate-btn" style="background: linear-gradient(135deg, {{ vertical.color }}, {{ vertical.color }}cc)">
-                    Generate Process Map
-                </button>
-                <p class="process-hint">Analyzes all conversations, documents, and notes to create a comprehensive process map. This may take 15-30 seconds.</p>
-            </div>
-            <div id="process-loading" class="process-loading" style="display:none">
+        <div class="intel-section">
+            <div id="intel-loading" class="intel-loading" style="display:none">
                 <div class="spinner"></div>
-                <p>Analyzing all context... This may take 15-30 seconds</p>
+                <p>Analyzing all context and building intelligence...</p>
             </div>
-            <div id="process-content" style="display:none">
-                <div id="business-overview" class="overview-card"></div>
-                <div id="process-map-display"></div>
-                <div id="knowledge-gaps"></div>
-                <div id="automation-targets"></div>
+            <div id="intel-stale-banner" class="intel-stale-banner" style="display:none">
+                <span>⚡ New context available since last analysis.</span>
+                <button class="intel-stale-refresh" onclick="refreshIntelligence()">Refresh Now</button>
             </div>
-            <div id="feedback-banner" class="feedback-banner" style="display:none">
-                Feedback saved. Click 'Refresh Process Map' to regenerate with your corrections.
+            <div id="intel-empty" class="intel-empty-state" style="display:none">
+                <div class="intel-empty-icon">🧠</div>
+                <h3>No Intelligence Yet</h3>
+                <p>Start by chatting with the AI analyst, uploading documents, or adding notes. Once there's enough context, the intelligence dashboard will populate automatically.</p>
+                <button class="primary-btn intel-generate-btn" style="background: {{ vertical.color }}" onclick="refreshIntelligence()">Generate Intelligence</button>
+            </div>
+            <div id="intel-content" style="display:none">
+                <div id="intel-business-profile" class="intel-card"></div>
+                <div id="intel-knowledge-gaps" class="intel-card"></div>
+                <div id="intel-process-map" class="intel-card"></div>
+                <div id="intel-pain-points" class="intel-card"></div>
+                <div id="intel-team-structure" class="intel-card"></div>
+                <div id="intel-tools-inventory" class="intel-card"></div>
+                <div id="intel-context-coverage" class="intel-coverage-area"></div>
+                <div class="intel-actions">
+                    <button class="primary-btn intel-refresh-btn" style="background: {{ vertical.color }}" onclick="refreshIntelligence()">🔄 Refresh Intelligence</button>
+                </div>
+            </div>
+            <div id="intel-feedback-banner" class="feedback-banner" style="display:none">
+                Feedback saved. Click 'Refresh Intelligence' to regenerate with your corrections.
             </div>
         </div>
     </div>

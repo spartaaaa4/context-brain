@@ -11,6 +11,7 @@ class User(UserMixin, db.Model):
     email = db.Column(db.Text, unique=True, nullable=False)
     display_name = db.Column(db.Text)
     profile_pic = db.Column(db.Text)
+    pin = db.Column(db.Text)
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_active_at = db.Column(db.DateTime)
@@ -50,6 +51,7 @@ class Document(db.Model):
     file_type = db.Column(db.Text)
     file_path = db.Column(db.Text)
     file_size = db.Column(db.Integer)
+    file_data = db.Column(db.Text)
     doc_type = db.Column(db.Text)
     user_description = db.Column(db.Text)
     extracted_content = db.Column(db.Text)
@@ -99,3 +101,33 @@ class ProcessMapFeedback(db.Model):
 
     user = db.relationship('User', backref='feedback')
     process_map = db.relationship('ProcessMap', backref='feedback')
+
+
+class VerticalIntelligence(db.Model):
+    __tablename__ = 'vertical_intelligence'
+    id = db.Column(db.Integer, primary_key=True)
+    vertical_id = db.Column(db.Text, db.ForeignKey('verticals.id'))
+    intelligence_data = db.Column(db.Text)
+    context_hash = db.Column(db.Text)
+    generated_by = db.Column(db.Text, db.ForeignKey('users.id'))
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref='intelligence')
+    vertical = db.relationship('Vertical', backref='intelligence')
+
+
+class IntelligenceFeedback(db.Model):
+    __tablename__ = 'intelligence_feedback'
+    id = db.Column(db.Integer, primary_key=True)
+    vertical_id = db.Column(db.Text, db.ForeignKey('verticals.id'))
+    user_id = db.Column(db.Text, db.ForeignKey('users.id'))
+    section = db.Column(db.Text, nullable=False)
+    field_path = db.Column(db.Text)
+    feedback_type = db.Column(db.Text, nullable=False)
+    original_value = db.Column(db.Text)
+    corrected_value = db.Column(db.Text)
+    comment = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref='intel_feedback')
+    vertical = db.relationship('Vertical', backref='intel_feedback')

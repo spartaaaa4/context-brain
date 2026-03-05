@@ -4,7 +4,7 @@
 <div class="login-container">
     <div class="login-card">
         <div class="login-header">
-            <span class="login-icon">🧠</span>
+            <span class="login-icon">&#x1f9e0;</span>
             <h1>Context Brain</h1>
             <p class="login-subtitle">BetterPlace AI Labs</p>
             <p class="login-desc">Central intelligence platform for capturing operational context across business verticals</p>
@@ -17,10 +17,14 @@
                 <label for="email">Work Email</label>
                 <input type="email" id="email" name="email" placeholder="you@betterplace.co.in" value="{{ email or '' }}" required autofocus>
             </div>
-            <button type="submit" class="login-btn">Send Verification Code</button>
+            <div class="form-group">
+                <label for="pin">PIN</label>
+                <input type="password" id="pin" name="pin" placeholder="4-digit PIN" maxlength="4" pattern="[0-9]{4}" required class="otp-input" inputmode="numeric">
+            </div>
+            <button type="submit" class="login-btn">Sign In</button>
         </form>
         <div class="login-footer">
-            <p>Enter your authorized work email to receive a one-time login code</p>
+            <p>Enter your authorized work email and PIN to sign in. Contact your admin if you don't have a PIN.</p>
         </div>
     </div>
 </div>

@@ -1,4 +1,5 @@
 import os
+import random
 import logging
 from flask import Flask, jsonify
 from flask_login import LoginManager
@@ -11,13 +12,19 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key")
 app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+    "pool_size": 5,
+    "max_overflow": 10,
+}
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 db.init_app(app)
 
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = "otp_auth.login"
+login_manager.login_view = "pin_auth.login"
 
 
 @login_manager.user_loader
@@ -29,11 +36,21 @@ def load_user(user_id):
         return None
 
 
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db.session.remove()
+
+
 ADMIN_EMAILS = [e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()]
+ALLOWED_EMAILS = [e.strip().lower() for e in os.environ.get("ALLOWED_EMAILS", "").split(",") if e.strip()]
 
 
 def is_admin(email):
     return email.lower() in ADMIN_EMAILS
+
+
+def generate_pin():
+    return str(random.randint(1000, 9999))
 
 
 SEED_VERTICALS = [
@@ -97,17 +114,15 @@ SEED_VERTICALS = [
 def init_db():
     try:
         db.create_all()
-        db.session.execute(db.text("""
-            CREATE TABLE IF NOT EXISTS otp_codes (
-                id SERIAL PRIMARY KEY,
-                email TEXT NOT NULL,
-                code TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at TIMESTAMP NOT NULL,
-                used BOOLEAN DEFAULT FALSE
-            )
-        """))
-        db.session.commit()
+        with db.engine.connect() as conn:
+            conn.execute(db.text("SET lock_timeout = '3s'"))
+            try:
+                conn.execute(db.text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data TEXT"))
+                conn.execute(db.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS pin TEXT"))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
         if Vertical.query.count() == 0:
             for v_data in SEED_VERTICALS:
                 v = Vertical(**v_data)
@@ -116,14 +131,34 @@ def init_db():
             logger.info("[DB] Seeded 6 verticals")
         else:
             logger.info(f"[DB] {Vertical.query.count()} verticals already exist")
+
+        for email in ALLOWED_EMAILS:
+            user = User.query.filter_by(email=email).first()
+            if not user:
+                name_part = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+                user = User(
+                    id=email,
+                    email=email,
+                    display_name=name_part,
+                    pin=generate_pin(),
+                    is_admin=email in ADMIN_EMAILS,
+                )
+                db.session.add(user)
+            elif not user.pin:
+                user.pin = generate_pin()
+            user.is_admin = email in ADMIN_EMAILS
+        db.session.commit()
+        logger.info(f"[DB] {len(ALLOWED_EMAILS)} users ensured with PINs")
+
     except Exception as e:
         logger.error(f"[DB] Init error: {e}")
         db.session.rollback()
         raise
 
 
-with app.app_context():
-    init_db()
+if os.environ.get("WERKZEUG_RUN_MAIN") == "true" or not app.debug:
+    with app.app_context():
+        init_db()
 
 
 @app.route("/healthz")
@@ -147,13 +182,13 @@ def handle_404(e):
     return jsonify({"error": "Not found"}), 404
 
 
-from otp_auth import otp_auth
+from pin_auth import pin_auth
 from routes import main_routes, api_routes, admin_routes
 
-app.register_blueprint(otp_auth)
+app.register_blueprint(pin_auth)
 app.register_blueprint(main_routes)
 app.register_blueprint(api_routes, url_prefix="/api")
 app.register_blueprint(admin_routes, url_prefix="/admin")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)

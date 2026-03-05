@@ -28,6 +28,8 @@ async function loadAdminOverview() {
             </div>
         `;
 
+        loadUsers();
+
         document.getElementById('admin-verticals').innerHTML = data.verticals.map(v => `
             <div class="admin-vertical-card" style="border-top-color: ${v.color}" onclick="loadVerticalDetail('${v.id}')">
                 <div class="card-header">
@@ -162,6 +164,103 @@ window.showAdminTab = function(tab) {
     document.querySelectorAll('.admin-tab-content').forEach(tc => tc.classList.remove('active'));
     event.target.classList.add('active');
     document.getElementById(`atab-${tab}`).classList.add('active');
+};
+
+async function loadUsers() {
+    try {
+        const res = await fetch('/admin/api/users');
+        const users = await res.json();
+        const section = document.getElementById('admin-users-section');
+        section.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;margin-top:24px">
+                <h2 style="font-size:20px;font-weight:600">User Management</h2>
+                <button onclick="addUser()" style="padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500">+ Add User</button>
+            </div>
+            <div style="overflow-x:auto">
+                <table style="width:100%;border-collapse:collapse;background:var(--bg-secondary);border-radius:12px;overflow:hidden">
+                    <thead>
+                        <tr style="border-bottom:1px solid var(--border-color)">
+                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Email</th>
+                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Name</th>
+                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">PIN</th>
+                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Last Active</th>
+                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Admin</th>
+                            <th style="padding:12px 16px;text-align:right;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${users.map(u => `
+                            <tr style="border-bottom:1px solid var(--border-color)">
+                                <td style="padding:12px 16px;font-size:14px;color:var(--text-primary)">${esc(u.email)}</td>
+                                <td style="padding:12px 16px;font-size:14px;color:var(--text-secondary)">${esc(u.display_name || '')}</td>
+                                <td style="padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--text-primary)">${esc(u.pin || '—')}</td>
+                                <td style="padding:12px 16px;font-size:13px;color:var(--text-muted)">${u.last_active_at ? new Date(u.last_active_at).toLocaleDateString() : 'Never'}</td>
+                                <td style="padding:12px 16px;font-size:13px">${u.is_admin ? '<span style="color:#10B981">Yes</span>' : '<span style="color:var(--text-muted)">No</span>'}</td>
+                                <td style="padding:12px 16px;text-align:right">
+                                    <button onclick="regenPin('${esc(u.email)}')" style="padding:4px 10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;margin-right:6px">Regenerate PIN</button>
+                                    <button onclick="removeUser('${esc(u.email)}')" style="padding:4px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;color:#EF4444;cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif">Remove</button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } catch (e) {
+        console.error('Failed to load users:', e);
+    }
+}
+
+window.addUser = async function() {
+    const email = prompt('Enter email address for the new user:');
+    if (!email) return;
+    try {
+        const res = await fetch('/admin/api/users', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email})
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error || 'Failed to add user');
+            return;
+        }
+        alert(`User created! PIN: ${data.pin}`);
+        loadUsers();
+    } catch (e) {
+        alert('Failed to add user');
+    }
+};
+
+window.regenPin = async function(email) {
+    if (!confirm(`Regenerate PIN for ${email}?`)) return;
+    try {
+        const res = await fetch(`/admin/api/users/${encodeURIComponent(email)}/pin`, {method: 'PUT'});
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error || 'Failed to regenerate PIN');
+            return;
+        }
+        alert(`New PIN for ${email}: ${data.pin}`);
+        loadUsers();
+    } catch (e) {
+        alert('Failed to regenerate PIN');
+    }
+};
+
+window.removeUser = async function(email) {
+    if (!confirm(`Remove user ${email}? This cannot be undone.`)) return;
+    try {
+        const res = await fetch(`/admin/api/users/${encodeURIComponent(email)}`, {method: 'DELETE'});
+        const data = await res.json();
+        if (!res.ok) {
+            alert(data.error || 'Failed to remove user');
+            return;
+        }
+        loadUsers();
+    } catch (e) {
+        alert('Failed to remove user');
+    }
 };
 
 function esc(text) {
