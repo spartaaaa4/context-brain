@@ -6,12 +6,10 @@ from anthropic import Anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from models import db, Message, Document, Vertical, Note, ProcessMap, ProcessMapFeedback
 
-AI_INTEGRATIONS_ANTHROPIC_API_KEY = os.environ.get("AI_INTEGRATIONS_ANTHROPIC_API_KEY")
-AI_INTEGRATIONS_ANTHROPIC_BASE_URL = os.environ.get("AI_INTEGRATIONS_ANTHROPIC_BASE_URL")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 client = Anthropic(
-    api_key=AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-    base_url=AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+    api_key=ANTHROPIC_API_KEY,
 )
 
 
@@ -86,7 +84,7 @@ def send_chat_message(vertical, messages_history, user_message):
     api_messages.append({"role": "user", "content": user_message})
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-4-20250514",
         max_tokens=1024,
         system=system_prompt,
         messages=api_messages
@@ -171,7 +169,7 @@ def process_document_content(doc, vertical, text_content=None, base64_content=No
         return None
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-4-20250514",
         max_tokens=2048,
         system=system_prompt,
         messages=[{"role": "user", "content": messages_content}]
@@ -360,7 +358,7 @@ def generate_process_map(vertical_id, user_id):
     system_prompt = get_process_map_prompt(vertical)
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-4-20250514",
         max_tokens=8192,
         system=system_prompt,
         messages=[{
