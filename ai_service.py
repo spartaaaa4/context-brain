@@ -278,6 +278,7 @@ def start_document_processing(app, doc_id):
 
 
 def get_process_map_prompt(vertical):
+    # Single Claude API call returns all 6 sections: businessOverview, processMap, keyInsights, topAutomationTargets, knowledgeGaps, communicationChannels/complianceNotes
     return f"""You are a senior process analyst at BetterPlace Group's AI Labs. You have been given all available context about {vertical.name} ({vertical.geography} — {vertical.type}).
 
 Your job is to produce a comprehensive, structured analysis of this business unit.

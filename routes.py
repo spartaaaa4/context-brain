@@ -472,16 +472,22 @@ def get_process_map(vertical_id):
     })
 
 
+PROCESS_MAP_FEEDBACK_TYPES = ("correct", "partially_correct", "wrong")
+
 @api_routes.route("/process-map/<int:map_id>/feedback", methods=["POST"])
 @login_required
 def submit_feedback(map_id):
     data = request.json
     step_number = data.get("stepNumber")
-    feedback_type = data.get("feedbackType")
-    content = data.get("content", "")
+    feedback_type = (data.get("feedbackType") or "").strip().lower()
+    content = (data.get("content") or "").strip()
 
     if not feedback_type:
         return jsonify({"error": "Missing feedbackType"}), 400
+    if feedback_type not in PROCESS_MAP_FEEDBACK_TYPES:
+        return jsonify({
+            "error": f"feedbackType must be one of: {', '.join(PROCESS_MAP_FEEDBACK_TYPES)}"
+        }), 400
 
     fb = ProcessMapFeedback(
         process_map_id=map_id,

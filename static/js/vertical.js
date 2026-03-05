@@ -23,7 +23,7 @@ function initTabs() {
             tab.classList.add('active');
             document.getElementById(`tab-${tab.dataset.tab}`).classList.remove('hidden');
             if (tab.dataset.tab === 'process') {
-                loadIntelligence();
+                loadIntelligence(); // Cached intelligence when tab loads
             }
         });
     });
@@ -472,6 +472,39 @@ async function loadIntelligence() {
         content.style.display = 'none';
     }
 }
+
+window.regenerateProcessMap = async function() {
+    const btn = document.querySelector('.intel-regen-map-btn');
+    if (btn) btn.disabled = true;
+    const loading = document.getElementById('intel-loading');
+    loading.style.display = 'block';
+    try {
+        const res = await fetch('/api/process-map/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ verticalId: VERTICAL_ID })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            alert(err.error || 'Could not generate process map.');
+            return;
+        }
+        const data = await res.json();
+        currentMapId = data.id;
+        const mapData = data.map_data && data.map_data.processMap ? data.map_data.processMap : (data.map_data && data.map_data.steps ? data.map_data : { steps: [] });
+        if (intelligenceData) {
+            intelligenceData.processMap = mapData;
+            renderProcessMap(mapData);
+        } else {
+            renderProcessMap(mapData);
+        }
+    } catch (e) {
+        alert('Failed to regenerate process map. Please try again.');
+    } finally {
+        loading.style.display = 'none';
+        if (btn) btn.disabled = false;
+    }
+};
 
 window.refreshIntelligence = async function() {
     const loading = document.getElementById('intel-loading');

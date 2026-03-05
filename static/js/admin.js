@@ -94,6 +94,7 @@ window.loadVerticalDetail = async function(verticalId) {
                 <button class="admin-tab" onclick="showAdminTab('conversation')">Conversation</button>
                 <button class="admin-tab" onclick="showAdminTab('documents')">Documents</button>
                 <button class="admin-tab" onclick="showAdminTab('notes')">Notes</button>
+                <button class="admin-tab" onclick="showAdminTab('process_map', '${v.id}')">Process Map</button>
             </div>
 
             <div id="atab-contributors" class="admin-tab-content active">
@@ -153,18 +154,59 @@ window.loadVerticalDetail = async function(verticalId) {
                     </div>
                 `).join('') : '<p style="color:var(--text-muted)">No notes yet</p>'}
             </div>
+            <div id="atab-process_map" class="admin-tab-content">
+                <div id="admin-process-map-content"><p style="color:var(--text-muted)">Loading process map...</p></div>
+            </div>
         `;
+        loadAdminProcessMap(v.id);
     } catch (e) {
         detail.innerHTML = '<div class="loading-state">Error loading detail</div>';
     }
 };
 
-window.showAdminTab = function(tab) {
+window.showAdminTab = function(tab, verticalId) {
     document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.admin-tab-content').forEach(tc => tc.classList.remove('active'));
-    event.target.classList.add('active');
-    document.getElementById(`atab-${tab}`).classList.add('active');
+    if (event && event.target) event.target.classList.add('active');
+    const tabEl = document.getElementById(`atab-${tab}`);
+    if (tabEl) tabEl.classList.add('active');
+    if (tab === 'process_map' && (verticalId || currentAdminVertical)) loadAdminProcessMap(verticalId || currentAdminVertical);
 };
+
+async function loadAdminProcessMap(verticalId) {
+    const container = document.getElementById('admin-process-map-content');
+    if (!container) return;
+    try {
+        const res = await fetch(`/api/process-map/${verticalId}`);
+        if (!res.ok) { container.innerHTML = '<p style="color:var(--text-muted)">Failed to load process map</p>'; return; }
+        const data = await res.json();
+        if (!data || !data.map_data) {
+            container.innerHTML = '<p style="color:var(--text-muted)">No process map generated yet for this vertical.</p>';
+            return;
+        }
+        const md = data.map_data;
+        const pm = md.processMap || md;
+        const steps = pm.steps || [];
+        const name = pm.processName || 'Process Map';
+        const summary = data.source_summary || '';
+        container.innerHTML = `
+            <div style="margin-bottom:12px">
+                <strong style="font-size:14px">${esc(name)}</strong>
+                <span style="font-size:12px;color:var(--text-muted);margin-left:8px">v${data.version}</span>
+            </div>
+            ${summary ? `<p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">${esc(summary)}</p>` : ''}
+            ${steps.length ? steps.map((s, i) => `
+                <div style="padding:12px;margin-bottom:8px;background:var(--bg-card);border-radius:8px;border-left:3px solid var(--accent)">
+                    <div style="font-weight:600;font-size:13px">Step ${s.stepNumber != null ? s.stepNumber : i + 1}: ${esc(s.name || '')}</div>
+                    <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${esc(s.description || '')}</div>
+                    ${s.owner ? `<div style="font-size:12px;color:var(--text-muted);margin-top:4px">Owner: ${esc(s.owner)}</div>` : ''}
+                </div>
+            `).join('') : '<p style="color:var(--text-muted)">No steps in this map.</p>'}
+        `;
+    } catch (e) {
+        container.innerHTML = '<p style="color:var(--text-muted)">Error loading process map.</p>';
+    }
+}
 
 async function loadUsers() {
     try {

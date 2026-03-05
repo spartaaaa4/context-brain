@@ -2073,15 +2073,20 @@ body {
 }
 
 .intel-actions {
-    text-align: center;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
     padding: 16px 0;
 }
 
-.intel-refresh-btn {
+.intel-refresh-btn,
+.intel-regen-map-btn {
     padding: 12px 28px;
     font-size: 15px;
 }
 
+/* Mobile responsive */
 @media (max-width: 768px) {
     .main-content { padding: 16px; }
     .verticals-grid { grid-template-columns: 1fr; }
@@ -2090,12 +2095,30 @@ body {
     .message { max-width: 95%; }
     .step-meta { gap: 6px; }
     .nav-username { display: none; }
-    .tabs { overflow-x: auto; }
-    .chat-container { height: calc(100vh - 320px); }
+    .tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; }
+    .tab { padding: 10px 14px; font-size: 13px; white-space: nowrap; }
+    .chat-container { min-height: 300px; height: calc(100vh - 320px); }
     .step-feedback-buttons { gap: 4px; }
     .fb-btn { padding: 6px 10px; font-size: 11px; }
     .intel-profile-field { flex-direction: column; }
     .intel-profile-label { min-width: auto; }
     .intel-step-feedback { flex-wrap: wrap; }
     .intel-stale-banner { flex-direction: column; gap: 8px; text-align: center; }
+    .intel-actions { flex-direction: column; }
+    .intel-refresh-btn, .intel-regen-map-btn { width: 100%; }
+    .vertical-header { flex-wrap: wrap; }
+    .dashboard-header h1 { font-size: 22px; }
+    .export-buttons { flex-direction: column; }
+    .export-btn { display: block; text-align: center; }
+    .admin-tabs { overflow-x: auto; flex-wrap: nowrap; }
+}
+
+@media (max-width: 480px) {
+    .main-content { padding: 12px; }
+    .navbar { padding: 0 12px; }
+    .nav-brand span:not(.brain-icon) { font-size: 16px; }
+    .vertical-card { padding: 16px; }
+    .card-stats { flex-wrap: wrap; gap: 12px; }
+    .stat-item { min-width: 0; }
+    .login-card { padding: 24px 20px; }
 }
