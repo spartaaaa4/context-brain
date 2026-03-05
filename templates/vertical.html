@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}{{ vertical.name }} - Context Brain{% endblock %}
+{% block head %}
+<style>
+    :root {
+        --accent: {{ vertical.color }};
+        --accent-alpha: {{ vertical.color }}22;
+    }
+</style>
+{% endblock %}
+{% block nav_extra %}
+<a href="/" class="nav-link nav-back">Back to Dashboard</a>
+{% endblock %}
+{% block content %}
+<div class="vertical-workspace" data-vertical-id="{{ vertical.id }}">
+    <div class="vertical-header" style="border-color: {{ vertical.color }}">
+        <span class="vertical-icon">{{ vertical.icon }}</span>
+        <div class="vertical-info">
+            <h1>{{ vertical.name }}</h1>
+            <span class="vertical-meta">{{ vertical.geography }} &middot; {{ vertical.type }}</span>
+        </div>
+    </div>
+    <div class="tabs">
+        <button class="tab active" data-tab="chat" style="--tab-color: {{ vertical.color }}">Chat</button>
+        <button class="tab" data-tab="documents" style="--tab-color: {{ vertical.color }}">Documents</button>
+        <button class="tab" data-tab="notes" style="--tab-color: {{ vertical.color }}">Notes</button>
+        <button class="tab" data-tab="process" style="--tab-color: {{ vertical.color }}">Process Intelligence</button>
+    </div>
+    <div class="tab-content" id="tab-chat">
+        <div class="chat-container">
+            <div class="chat-messages" id="chat-messages">
+                <div class="chat-empty">
+                    <p>No messages yet. Start the conversation with the AI Process Analyst.</p>
+                </div>
+            </div>
+            <div class="chat-input-area">
+                <div class="typing-indicator" id="typing-indicator" style="display:none">
+                    <span></span><span></span><span></span>
+                    <span class="typing-text">AI is thinking...</span>
+                </div>
+                <div class="chat-input-row">
+                    <textarea id="chat-input" placeholder="Type your message... (Enter to send, Shift+Enter for new line)" rows="1"></textarea>
+                    <button id="voice-btn" class="icon-btn" title="Voice input" style="display:none">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    </button>
+                    <button id="send-btn" class="send-btn" style="background: {{ vertical.color }}">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="tab-content hidden" id="tab-documents">
+        <div class="documents-section">
+            <div class="upload-area" id="upload-area">
+                <div class="upload-dropzone" id="dropzone">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#64748B" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <p>Drag & drop files here or <button class="upload-browse" onclick="document.getElementById('file-input').click()">browse</button></p>
+                    <p class="upload-hint">PDF, DOCX, TXT, PNG, JPG, CSV, XLSX (max 10MB)</p>
+                    <input type="file" id="file-input" accept=".pdf,.docx,.txt,.png,.jpg,.jpeg,.csv,.xlsx" style="display:none">
+                </div>
+            </div>
+            <div class="documents-list" id="documents-list">
+                <div class="loading-state">Loading documents...</div>
+            </div>
+        </div>
+    </div>
+    <div class="tab-content hidden" id="tab-notes">
+        <div class="notes-section">
+            <div class="note-form">
+                <textarea id="note-content" placeholder="Type or paste your notes here... Share processes, team info, tools used, pain points, or anything relevant." rows="4"></textarea>
+                <div class="note-form-row">
+                    <select id="note-category">
+                        <option value="process">Process</option>
+                        <option value="team">Team Structure</option>
+                        <option value="tools">Tools & Systems</option>
+                        <option value="pain_points">Pain Points</option>
+                        <option value="metrics">Metrics</option>
+                        <option value="business_model">Business Model</option>
+                        <option value="other" selected>Other</option>
+                    </select>
+                    <button id="add-note-btn" class="primary-btn" style="background: {{ vertical.color }}">Add Note</button>
+                </div>
+            </div>
+            <div class="notes-list" id="notes-list">
+                <div class="loading-state">Loading notes...</div>
+            </div>
+        </div>
+    </div>
+    <div class="tab-content hidden" id="tab-process">
+        <div class="process-section">
+            <div class="process-actions">
+                <button id="generate-map-btn" class="generate-btn" style="background: linear-gradient(135deg, {{ vertical.color }}, {{ vertical.color }}cc)">
+                    Generate Process Map
+                </button>
+                <p class="process-hint">Analyzes all conversations, documents, and notes to create a comprehensive process map. This may take 15-30 seconds.</p>
+            </div>
+            <div id="process-loading" class="process-loading" style="display:none">
+                <div class="spinner"></div>
+                <p>Analyzing all context... This may take 15-30 seconds</p>
+            </div>
+            <div id="process-content" style="display:none">
+                <div id="business-overview" class="overview-card"></div>
+                <div id="process-map-display"></div>
+                <div id="knowledge-gaps"></div>
+                <div id="automation-targets"></div>
+            </div>
+            <div id="feedback-banner" class="feedback-banner" style="display:none">
+                Feedback saved. Click 'Refresh Process Map' to regenerate with your corrections.
+            </div>
+        </div>
+    </div>
+</div>
+<div class="modal-overlay" id="upload-modal" style="display:none">
+    <div class="modal">
+        <div class="modal-header">
+            <h3>Upload Document</h3>
+            <button class="modal-close" onclick="closeUploadModal()">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label>File</label>
+                <p id="modal-filename" class="file-info"></p>
+            </div>
+            <div class="form-group">
+                <label for="modal-doctype">Document Type</label>
+                <select id="modal-doctype">
+                    <option value="sop">SOP</option>
+                    <option value="process_doc">Process Document</option>
+                    <option value="meeting_transcript">Meeting Transcript</option>
+                    <option value="training_material">Training Material</option>
+                    <option value="org_chart">Org Chart</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="modal-description">Description (required)</label>
+                <textarea id="modal-description" placeholder="e.g., This is our standard SOP for onboarding new warehouse workers in Jakarta" rows="3"></textarea>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="secondary-btn" onclick="closeUploadModal()">Cancel</button>
+            <button id="modal-upload-btn" class="primary-btn" style="background: {{ vertical.color }}">Upload</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+    window.VERTICAL_ID = "{{ vertical.id }}";
+    window.VERTICAL_COLOR = "{{ vertical.color }}";
+    window.VERTICAL_NAME = "{{ vertical.name }}";
+</script>
+<script src="/static/js/vertical.js"></script>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Context Brain - Dashboard{% endblock %}
+{% block nav_extra %}
+<div id="admin-link-container"></div>
+{% endblock %}
+{% block content %}
+<div class="dashboard">
+    <div class="dashboard-header">
+        <h1>Business Verticals</h1>
+        <p class="dashboard-subtitle">Select a vertical to start capturing operational context</p>
+    </div>
+    <div class="verticals-grid" id="verticals-grid">
+        <div class="loading-state">Loading verticals...</div>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}
