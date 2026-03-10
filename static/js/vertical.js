@@ -213,6 +213,107 @@ async function loadChatHistory() {
     }
 }
 
+// --- Document type recommendations per vertical type ---
+const DOC_RECOMMENDATIONS = {
+    'Gig Task Fulfillment Platform': [
+        { label: 'Worker onboarding SOP', docType: 'sop', hint: 'Step-by-step guide for registering and activating new gig workers' },
+        { label: 'Task assignment process doc', docType: 'process_doc', hint: 'How tasks are assigned, tracked, and closed' },
+        { label: 'Quality review checklist / criteria', docType: 'sop', hint: 'Standards used to verify task completion' },
+        { label: 'Client onboarding / intake form', docType: 'process_doc', hint: 'How new enterprise clients are set up' },
+        { label: 'Payroll / payout SOP', docType: 'sop', hint: 'Worker payment cycle, tools, exception handling' },
+        { label: 'Team org chart or RACI', docType: 'org_chart', hint: 'Roles, headcounts, reporting structure' },
+        { label: 'Tools & systems list', docType: 'other', hint: 'Internal apps, CRMs, spreadsheets, communication tools' },
+    ],
+    'Part-time / Gig Staffing': [
+        { label: 'Worker sourcing & registration SOP', docType: 'sop', hint: 'How part-timers are recruited and onboarded onto the platform' },
+        { label: 'Shift assignment process doc', docType: 'process_doc', hint: 'How shifts are created, filled, and confirmed' },
+        { label: 'Client request / order intake SOP', docType: 'sop', hint: 'How businesses submit staffing requests' },
+        { label: 'Attendance & check-in process', docType: 'process_doc', hint: 'How clock-in, no-shows, and replacements are managed' },
+        { label: 'Worker payout process', docType: 'sop', hint: 'When and how workers get paid, including exceptions' },
+        { label: 'Org chart / team structure', docType: 'org_chart', hint: 'Ops team roles and reporting lines' },
+        { label: 'Platform tools overview', docType: 'other', hint: 'App, CRM, internal dashboards used by the ops team' },
+    ],
+    'Outsourcing / BPO Platform': [
+        { label: 'Worker deployment SOP', docType: 'sop', hint: 'End-to-end process from client request to worker placement at site' },
+        { label: 'Client contract / engagement model', docType: 'process_doc', hint: 'How contracts are structured — per worker, per month, per output' },
+        { label: 'Compliance & regulatory checklist', docType: 'other', hint: 'Labour law, BPJS, government reporting requirements' },
+        { label: 'Attendance & time-tracking process', docType: 'process_doc', hint: 'How worker hours are recorded and verified' },
+        { label: 'Invoice & payroll cycle', docType: 'sop', hint: 'Billing to clients and payment to workers' },
+        { label: 'Worker performance review criteria', docType: 'sop', hint: 'KPIs, review cadence, disciplinary process' },
+        { label: 'Org chart / team structure', docType: 'org_chart', hint: 'Account managers, ops team, field coordinators' },
+    ],
+    'Recruitment Platform': [
+        { label: 'Job matching / screening SOP', docType: 'sop', hint: 'How candidates are matched to job openings and screened' },
+        { label: 'Candidate sourcing process doc', docType: 'process_doc', hint: 'Job portals, outbound calling, referral channels used' },
+        { label: 'Employer onboarding SOP', docType: 'sop', hint: 'How new employers post jobs and use the platform' },
+        { label: 'Interview scheduling & follow-up process', docType: 'process_doc', hint: 'How interviews are coordinated between candidates and employers' },
+        { label: 'Placement confirmation & billing SOP', docType: 'sop', hint: 'How successful placements are tracked and invoiced' },
+        { label: 'Team structure / RACI', docType: 'org_chart', hint: 'Roles across sourcing, matching, account management' },
+        { label: 'Job categories & volume data', docType: 'other', hint: 'What types of roles are most common, monthly placement volumes' },
+    ],
+    'Cross-vertical Enablement': [
+        { label: 'Technology stack overview', docType: 'other', hint: 'Shared platforms, APIs, infrastructure used across verticals' },
+        { label: 'Data platform / analytics SOP', docType: 'sop', hint: 'How data is collected, warehoused, and reported on' },
+        { label: 'Finance & reporting process', docType: 'process_doc', hint: 'How financials are consolidated across business units' },
+        { label: 'HR / people ops process', docType: 'sop', hint: 'Hiring, onboarding, payroll for BetterPlace employees' },
+        { label: 'Shared services org chart', docType: 'org_chart', hint: 'Which teams are shared vs. vertical-specific' },
+        { label: 'Compliance & legal overview', docType: 'other', hint: 'Cross-cutting legal, tax, and regulatory requirements' },
+    ],
+    'SaaS / Enterprise Software': [
+        { label: 'Product feature overview / roadmap', docType: 'process_doc', hint: 'What the product does and where it is going' },
+        { label: 'Customer onboarding SOP', docType: 'sop', hint: 'How enterprise customers are set up and trained' },
+        { label: 'Sales & demo process', docType: 'process_doc', hint: 'How deals are sourced, demoed, and closed' },
+        { label: 'Support / customer success process', docType: 'sop', hint: 'How issues are resolved, escalations handled' },
+        { label: 'Integration / implementation guide', docType: 'other', hint: 'How goBetter integrates with client HR / payroll systems' },
+        { label: 'Team org chart', docType: 'org_chart', hint: 'Product, engineering, sales, customer success teams' },
+        { label: 'Key metrics & reporting', docType: 'other', hint: 'MAU, ARR, churn, NPS, and how they are tracked' },
+    ],
+};
+const DOC_RECOMMENDATIONS_DEFAULT = [
+    { label: 'Core process SOP', docType: 'sop', hint: 'Primary step-by-step operational process document' },
+    { label: 'Team org chart or RACI', docType: 'org_chart', hint: 'Roles, headcounts, reporting lines' },
+    { label: 'Tools & systems inventory', docType: 'other', hint: 'Every app, spreadsheet, and system the team uses' },
+    { label: 'Meeting transcript or discovery notes', docType: 'meeting_transcript', hint: 'Any recorded or written notes from discovery sessions' },
+    { label: 'Training material', docType: 'training_material', hint: 'Guides used to train new team members' },
+];
+
+function getDocRecommendations() {
+    const vType = window.VERTICAL_TYPE || '';
+    for (const [key, recs] of Object.entries(DOC_RECOMMENDATIONS)) {
+        if (vType.toLowerCase().includes(key.toLowerCase()) || key.toLowerCase().includes(vType.toLowerCase())) {
+            return recs;
+        }
+    }
+    return DOC_RECOMMENDATIONS_DEFAULT;
+}
+
+function renderDocChecklist(uploadedDocs) {
+    const list = document.getElementById('doc-checklist-list');
+    if (!list) return;
+    const recs = getDocRecommendations();
+    const uploadedNames = (uploadedDocs || []).map(d => d.filename.toLowerCase());
+
+    list.innerHTML = recs.map(rec => {
+        // Fuzzy match: if any uploaded doc type matches or name includes a keyword
+        const keywords = rec.label.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+        const covered = uploadedNames.some(n => keywords.some(kw => n.includes(kw))) ||
+            (uploadedDocs || []).some(d => d.doc_type === rec.docType);
+        return `
+            <li class="doc-checklist-item ${covered ? 'covered' : ''}">
+                <span class="doc-checklist-check">${covered ? '✅' : '☐'}</span>
+                <div class="doc-checklist-text">
+                    <span class="doc-checklist-label">${rec.label}</span>
+                    <span class="doc-checklist-hint">${rec.hint}</span>
+                </div>
+                ${!covered ? `<button class="doc-checklist-upload-btn" onclick="document.getElementById('file-input').click()" title="Upload this document">Upload</button>` : ''}
+            </li>`;
+    }).join('');
+}
+
+// Pending upload queue for multi-file support
+let uploadQueue = [];
+let currentUploadIndex = 0;
+
 function initDocuments() {
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('file-input');
@@ -229,20 +330,41 @@ function initDocuments() {
     dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropzone.classList.remove('dragover');
-        if (e.dataTransfer.files.length) openUploadModal(e.dataTransfer.files[0]);
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length) enqueueFiles(files);
     });
 
     fileInput.addEventListener('change', () => {
-        if (fileInput.files.length) openUploadModal(fileInput.files[0]);
+        const files = Array.from(fileInput.files);
+        if (files.length) enqueueFiles(files);
         fileInput.value = '';
     });
 
     document.getElementById('modal-upload-btn').addEventListener('click', uploadFile);
 }
 
+function enqueueFiles(files) {
+    uploadQueue = files;
+    currentUploadIndex = 0;
+    openUploadModal(uploadQueue[currentUploadIndex]);
+}
+
+function openNextInQueue() {
+    currentUploadIndex++;
+    if (currentUploadIndex < uploadQueue.length) {
+        openUploadModal(uploadQueue[currentUploadIndex]);
+    } else {
+        uploadQueue = [];
+        currentUploadIndex = 0;
+    }
+}
+
 function openUploadModal(file) {
     pendingFile = file;
-    document.getElementById('modal-filename').textContent = `${file.name} (${formatFileSize(file.size)})`;
+    const queueLabel = uploadQueue.length > 1
+        ? ` (${currentUploadIndex + 1} of ${uploadQueue.length})`
+        : '';
+    document.getElementById('modal-filename').textContent = `${file.name} (${formatFileSize(file.size)})${queueLabel}`;
     document.getElementById('modal-description').value = '';
     document.getElementById('upload-modal').style.display = 'flex';
 }
@@ -250,6 +372,8 @@ function openUploadModal(file) {
 window.closeUploadModal = function() {
     document.getElementById('upload-modal').style.display = 'none';
     pendingFile = null;
+    uploadQueue = [];
+    currentUploadIndex = 0;
 };
 
 async function uploadFile() {
@@ -284,7 +408,17 @@ async function uploadFile() {
             return;
         }
 
-        closeUploadModal();
+        document.getElementById('upload-modal').style.display = 'none';
+        pendingFile = null;
+
+        // If there are more files in the queue, open the next one
+        if (uploadQueue.length > 1 && currentUploadIndex < uploadQueue.length - 1) {
+            openNextInQueue();
+        } else {
+            uploadQueue = [];
+            currentUploadIndex = 0;
+        }
+
         loadDocuments();
     } catch (e) {
         alert('Upload failed. Please try again.');
@@ -298,6 +432,10 @@ async function loadDocuments() {
     try {
         const res = await fetch(`/api/documents/${VERTICAL_ID}`);
         const docs = await res.json();
+
+        // Update the recommended document checklist
+        renderDocChecklist(docs);
+
         const list = document.getElementById('documents-list');
 
         if (!docs.length) {
@@ -435,41 +573,63 @@ async function loadIntelligence() {
     const empty = document.getElementById('intel-empty');
     const stale = document.getElementById('intel-stale-banner');
 
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    empty.style.display = 'none';
+    stale.style.display = 'none';
+
     try {
         const res = await fetch(`/api/intelligence/${VERTICAL_ID}`);
         if (!res.ok) {
-            if (res.status === 404) {
-                empty.style.display = 'block';
-                content.style.display = 'none';
-                stale.style.display = 'none';
-                return;
-            }
-            throw new Error('Failed to load intelligence');
+            loading.style.display = 'none';
+            empty.style.display = 'block';
+            return;
         }
         const data = await res.json();
 
-        if (!data.intelligence) {
-            empty.style.display = 'block';
-            content.style.display = 'none';
-            stale.style.display = 'none';
+        // If there's cached intelligence, show it immediately
+        if (data.intelligence) {
+            intelligenceData = data.intelligence;
+            loading.style.display = 'none';
+            content.style.display = 'block';
+            empty.style.display = 'none';
+            stale.style.display = data.stale ? 'flex' : 'none';
+            renderIntelligence(data.intelligence);
             return;
         }
 
-        intelligenceData = data.intelligence;
-        empty.style.display = 'none';
-        content.style.display = 'block';
+        // No cache but context exists → auto-generate without waiting for user click
+        if (data.has_context) {
+            // Keep loading spinner up, trigger generation automatically
+            loading.style.display = 'block';
+            loading.querySelector('p').textContent =
+                'Context found — generating intelligence report… (this may take 30–60 seconds)';
 
-        if (data.stale) {
-            stale.style.display = 'flex';
-        } else {
-            stale.style.display = 'none';
+            const genRes = await fetch(`/api/intelligence/${VERTICAL_ID}/refresh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (genRes.ok) {
+                const genData = await genRes.json();
+                intelligenceData = genData.intelligence;
+                loading.style.display = 'none';
+                content.style.display = 'block';
+                renderIntelligence(genData.intelligence);
+            } else {
+                loading.style.display = 'none';
+                empty.style.display = 'block';
+            }
+            return;
         }
 
-        renderIntelligence(data.intelligence);
+        // No context at all — show the empty / guidance state
+        loading.style.display = 'none';
+        empty.style.display = 'block';
     } catch (e) {
         console.error('Failed to load intelligence:', e);
+        loading.style.display = 'none';
         empty.style.display = 'block';
-        content.style.display = 'none';
     }
 }
 
