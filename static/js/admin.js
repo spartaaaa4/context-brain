@@ -1,8 +1,26 @@
 let currentAdminVertical = null;
 
 document.addEventListener('DOMContentLoaded', () => {
+    initCrossVerticalSection();
     loadAdminOverview();
 });
+
+function initCrossVerticalSection() {
+    const container = document.getElementById('admin-cross-vertical');
+    if (!container) return;
+    container.innerHTML = `
+        <div class="intel-card">
+            <div class="intel-card-header">
+                <h3>🔗 Cross-Vertical Analysis</h3>
+            </div>
+            <p class="dashboard-subtitle" style="margin-bottom:16px">Identify common pain points, reusable agent patterns, and build-once-serve-many automation opportunities across verticals.</p>
+            <div class="intel-actions" style="justify-content:flex-start;padding:0">
+                <button class="primary-btn" style="background:var(--accent)" onclick="loadCrossVerticalAnalysis()">Generate Cross-Vertical Analysis</button>
+            </div>
+            <div id="cross-vertical-results" style="margin-top:16px"></div>
+        </div>
+    `;
+}
 
 async function loadAdminOverview() {
     try {
@@ -86,6 +104,7 @@ window.loadVerticalDetail = async function(verticalId) {
             <div class="export-buttons">
                 <a href="/admin/api/export/${v.id}?format=json" class="export-btn">Export JSON</a>
                 <a href="/admin/api/export/${v.id}?format=markdown" class="export-btn">Export Markdown</a>
+                <a href="/admin/api/export/${v.id}?format=automation_brief" class="export-btn">Export Automation Brief</a>
                 <a href="/admin/api/export-all" class="export-btn">Export All Verticals (ZIP)</a>
             </div>
 
@@ -310,4 +329,102 @@ function esc(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+window.loadCrossVerticalAnalysis = async function() {
+    const container = document.getElementById('cross-vertical-results');
+    if (!container) return;
+    container.innerHTML = '<div class="loading-state">Generating cross-vertical analysis...</div>';
+
+    try {
+        const res = await fetch('/api/admin/cross-vertical-analysis');
+        const data = await res.json();
+        if (!res.ok) {
+            container.innerHTML = `<div class="login-error">${esc(data.error || 'Failed to generate analysis')}</div>`;
+            return;
+        }
+        renderCrossVerticalAnalysis(data);
+    } catch (e) {
+        container.innerHTML = '<div class="login-error">Failed to generate cross-vertical analysis.</div>';
+    }
+};
+
+function renderCrossVerticalAnalysis(data) {
+    const container = document.getElementById('cross-vertical-results');
+    if (!container) return;
+
+    const overall = data.overallRecommendation
+        ? `<div class="admin-pattern-summary"><strong>Overall Recommendation</strong><p>${esc(data.overallRecommendation)}</p></div>`
+        : '';
+
+    const painPoints = (data.commonPainPoints || []).map(item => `
+        <tr>
+            <td>${esc(item.painPoint || '')}</td>
+            <td>${(item.affectedVerticals || []).map(v => `<span class="note-category">${esc(v)}</span>`).join(' ')}</td>
+            <td>${esc(item.combinedMonthlyCost || 'Unknown')}</td>
+            <td>${esc(item.sharedAutomationOpportunity || '')}</td>
+        </tr>
+    `).join('');
+
+    const patterns = (data.sharedProcessPatterns || []).map(item => `
+        <div class="admin-pattern-card">
+            <div class="admin-pattern-card-header">
+                <strong>${esc(item.pattern || 'Pattern')}</strong>
+                <span class="priority-badge medium">Build Once, Serve Many</span>
+            </div>
+            <p>${esc(item.description || '')}</p>
+            <div class="admin-pattern-meta"><strong>Verticals:</strong> ${esc((item.verticals || []).join(', '))}</div>
+            <div class="admin-pattern-meta"><strong>Common steps:</strong> ${esc((item.commonSteps || []).join(', '))}</div>
+            <div class="admin-pattern-meta"><strong>Differences:</strong> ${esc((item.differences || []).join(' | '))}</div>
+            <div class="admin-pattern-meta"><strong>Reusable agent design:</strong> ${esc(item.reusableAgentDesign || '')}</div>
+        </div>
+    `).join('');
+
+    const priorityMatrix = (data.automationPriorityMatrix || []).map(item => `
+        <div class="intel-readiness-candidate">
+            <div class="intel-readiness-candidate-header">
+                <strong>#${esc(String(item.priority || '–'))} ${esc(item.automationTarget || 'Target')}</strong>
+                ${item.buildOnceServeMany ? '<span class="priority-badge high">Shared Build</span>' : ''}
+            </div>
+            <div class="intel-readiness-candidate-line">Verticals: ${esc((item.verticals || []).join(', '))}</div>
+            <div class="intel-readiness-candidate-line">Total monthly cost: ${esc(item.totalMonthlyCost || 'Unknown')}</div>
+            <div class="intel-readiness-candidate-line">Estimated savings: ${esc(item.totalEstimatedSavings || 'Unknown')}</div>
+            <div class="intel-readiness-candidate-line">Recommended beachhead: ${esc(item.recommendedBeachhead || 'Not specified')}</div>
+        </div>
+    `).join('');
+
+    const uniqueInsights = (data.uniqueInsightsPerVertical || []).map(item => `
+        <div class="intel-pain-card">
+            <div class="intel-pain-header">
+                <span class="intel-pain-title">${esc(item.vertical || 'Vertical')}</span>
+            </div>
+            <div class="intel-pain-detail"><span class="intel-detail-label">Unique aspect:</span> ${esc(item.uniqueAspect || '')}</div>
+            <div class="intel-pain-detail"><span class="intel-detail-label">Implication:</span> ${esc(item.implication || '')}</div>
+        </div>
+    `).join('');
+
+    container.innerHTML = `
+        ${overall}
+        <div class="intel-card" style="padding:0">
+            <div class="intel-card-header" style="padding:24px 24px 0 24px"><h3>Common Pain Points</h3></div>
+            <div class="intel-table-wrap" style="padding:0 24px 24px 24px">
+                <table class="intel-table">
+                    <thead><tr><th>Pain Point</th><th>Affected Verticals</th><th>Combined Cost</th><th>Shared Opportunity</th></tr></thead>
+                    <tbody>${painPoints || '<tr><td colspan="4">No shared pain points found.</td></tr>'}</tbody>
+                </table>
+            </div>
+        </div>
+        <div class="intel-card">
+            <div class="intel-card-header"><h3>Shared Process Patterns</h3></div>
+            <div class="admin-pattern-grid">${patterns || '<p class="intel-muted">No shared patterns found.</p>'}</div>
+        </div>
+        <div class="intel-card">
+            <div class="intel-card-header"><h3>Automation Priority Matrix</h3></div>
+            ${priorityMatrix || '<p class="intel-muted">No cross-vertical priorities found.</p>'}
+        </div>
+        <div class="intel-card">
+            <div class="intel-card-header"><h3>Unique Insights Per Vertical</h3></div>
+            ${uniqueInsights || '<p class="intel-muted">No unique insights captured.</p>'}
+        </div>
+    `;
 }

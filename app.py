@@ -108,6 +108,15 @@ SEED_VERTICALS = [
         "icon": "gB",
         "seed_context": "goBetter is the software product arm of BetterPlace Group. It has two products: manageBetter (enterprise HRMS and CLMS for managing frontline workforce -- attendance, payroll, compliance, hiring, onboarding) and skillBetter (mobile-first LMS for frontline worker training in 35+ languages). goBetter sells to large enterprises -- logistics companies, retail chains, FMCG, BFSI, hospitals, factories. Key differentiators: mobile-first, vernacular support, configurable workflows, single platform for on-roll + off-roll workers. Competitors include Darwinbox, Keka, Springworks, SAP SuccessFactors."
     },
+    {
+        "id": "betterplace-test",
+        "name": "Betterplace test",
+        "geography": "Internal Sandbox",
+        "type": "Testing / QA Workspace",
+        "color": "#F59E0B",
+        "icon": "BT",
+        "seed_context": "Betterplace test is an internal sandbox workspace for testing Context Brain end-to-end. Use it to validate chat flows, document uploads, notes, service blueprint generation, automation readiness, exports, and admin analysis. Treat the content here as synthetic or trial data meant for testing input/output behavior rather than real business operations."
+    },
 ]
 
 
@@ -123,14 +132,16 @@ def init_db():
             except Exception:
                 conn.rollback()
 
-        if Vertical.query.count() == 0:
-            for v_data in SEED_VERTICALS:
-                v = Vertical(**v_data)
-                db.session.add(v)
+        existing_verticals = {vertical.id for vertical in Vertical.query.all()}
+        added_verticals = 0
+        for v_data in SEED_VERTICALS:
+            if v_data["id"] not in existing_verticals:
+                db.session.add(Vertical(**v_data))
+                added_verticals += 1
+        if added_verticals > 0:
             db.session.commit()
-            logger.info("[DB] Seeded 6 verticals")
-        else:
-            logger.info(f"[DB] {Vertical.query.count()} verticals already exist")
+            logger.info(f"[DB] Added {added_verticals} missing seeded vertical(s)")
+        logger.info(f"[DB] {Vertical.query.count()} verticals available")
 
         for email in ALLOWED_EMAILS:
             user = User.query.filter_by(email=email).first()

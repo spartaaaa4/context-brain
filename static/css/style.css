@@ -2086,6 +2086,380 @@ body {
     font-size: 15px;
 }
 
+.intel-canvas-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.intel-canvas-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 16px;
+}
+
+.intel-canvas-span-2 {
+    grid-column: span 2;
+}
+
+.intel-canvas-card h4,
+.intel-readiness-candidates h4 {
+    font-size: 14px;
+    margin-bottom: 12px;
+}
+
+.intel-canvas-two-col,
+.intel-canvas-three-col {
+    display: grid;
+    gap: 12px;
+}
+
+.intel-canvas-two-col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.intel-canvas-three-col {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.intel-canvas-value-box {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.intel-canvas-label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+
+.intel-canvas-line {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    font-size: 13px;
+}
+
+.intel-canvas-line span {
+    color: var(--text-secondary);
+}
+
+.intel-canvas-line strong {
+    font-weight: 500;
+}
+
+.intel-canvas-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.intel-canvas-list-item {
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
+.intel-canvas-activities {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.intel-canvas-activity {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid #64748B;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.intel-canvas-activity.cost-low { border-left-color: #059669; }
+.intel-canvas-activity.cost-medium { border-left-color: #D97706; }
+.intel-canvas-activity.cost-high { border-left-color: #DC2626; }
+
+.intel-canvas-activity-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.intel-canvas-activity-meta,
+.intel-canvas-activity-detail,
+.intel-blueprint-stage-subtitle,
+.intel-readiness-detail,
+.admin-pattern-meta {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.intel-canvas-activity-why {
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 8px 0;
+}
+
+.intel-canvas-cost,
+.intel-canvas-readiness {
+    display: inline-block;
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.intel-canvas-cost.cost-low {
+    background: rgba(5, 150, 105, 0.12);
+    color: #059669;
+}
+
+.intel-canvas-cost.cost-medium {
+    background: rgba(217, 119, 6, 0.12);
+    color: #D97706;
+}
+
+.intel-canvas-cost.cost-high {
+    background: rgba(220, 38, 38, 0.12);
+    color: #DC2626;
+}
+
+.intel-canvas-readiness.readiness-high {
+    background: rgba(5, 150, 105, 0.12);
+    color: #059669;
+}
+
+.intel-canvas-readiness.readiness-medium {
+    background: rgba(217, 119, 6, 0.12);
+    color: #D97706;
+}
+
+.intel-canvas-readiness.readiness-low {
+    background: rgba(100, 116, 139, 0.15);
+    color: #94A3B8;
+}
+
+.score-low {
+    background: rgba(220, 38, 38, 0.12);
+    color: #DC2626;
+}
+
+.score-medium {
+    background: rgba(217, 119, 6, 0.12);
+    color: #D97706;
+}
+
+.score-good {
+    background: rgba(5, 150, 105, 0.12);
+    color: #059669;
+}
+
+.intel-cost-summary {
+    background: rgba(99, 102, 241, 0.08);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.intel-cost-summary-main {
+    font-size: 15px;
+    margin-bottom: 6px;
+}
+
+.intel-cost-summary-sub {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.intel-blueprint-stage {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 14px;
+}
+
+.intel-blueprint-stage-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.intel-blueprint-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.intel-blueprint-lane {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.intel-blueprint-lane p,
+.admin-pattern-card p,
+.admin-pattern-summary p {
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.intel-blueprint-detail {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin-top: 8px;
+    line-height: 1.5;
+}
+
+.intel-cost-badge {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.intel-cost-badge a {
+    color: inherit;
+    text-decoration: underline;
+    font-size: 12px;
+}
+
+.intel-cost-badge.confidence-high {
+    background: rgba(16, 185, 129, 0.12);
+    color: #10B981;
+}
+
+.intel-cost-badge.confidence-medium,
+.intel-cost-badge.confidence-low {
+    background: rgba(217, 119, 6, 0.12);
+    color: #D97706;
+}
+
+.intel-cost-basis {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.intel-blueprint-questions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.intel-readiness-overall {
+    margin-left: auto;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+}
+
+.intel-readiness-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.intel-readiness-row {
+    display: grid;
+    grid-template-columns: 180px 1fr 60px;
+    gap: 12px;
+    align-items: center;
+}
+
+.intel-readiness-bar {
+    height: 10px;
+    background: var(--bg-card);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.intel-readiness-fill {
+    height: 100%;
+    border-radius: inherit;
+}
+
+.intel-readiness-fill.score-low { background: #DC2626; }
+.intel-readiness-fill.score-medium { background: #D97706; }
+.intel-readiness-fill.score-good { background: #059669; }
+
+.intel-readiness-score {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.intel-readiness-detail {
+    grid-column: 2 / 4;
+}
+
+.intel-readiness-candidates {
+    margin-top: 20px;
+}
+
+.intel-readiness-candidate {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 10px;
+}
+
+.intel-readiness-candidate-header,
+.admin-pattern-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.intel-readiness-candidate-line {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.intel-readiness-footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.intel-readiness-footer-card,
+.admin-pattern-summary,
+.admin-pattern-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px;
+}
+
+.admin-pattern-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 12px;
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
     .main-content { padding: 16px; }
@@ -2111,6 +2485,19 @@ body {
     .export-buttons { flex-direction: column; }
     .export-btn { display: block; text-align: center; }
     .admin-tabs { overflow-x: auto; flex-wrap: nowrap; }
+    .intel-canvas-grid,
+    .intel-canvas-two-col,
+    .intel-canvas-three-col,
+    .intel-blueprint-grid,
+    .intel-readiness-footer {
+        grid-template-columns: 1fr;
+    }
+    .intel-readiness-row {
+        grid-template-columns: 1fr;
+    }
+    .intel-readiness-detail {
+        grid-column: auto;
+    }
 }
 
 @media (max-width: 480px) {

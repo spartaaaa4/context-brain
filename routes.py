@@ -825,6 +825,7 @@ def build_export_data(vertical_id):
     documents = Document.query.filter_by(vertical_id=vertical_id).all()
     notes = Note.query.filter_by(vertical_id=vertical_id).all()
     process_map = ProcessMap.query.filter_by(vertical_id=vertical_id).order_by(ProcessMap.version.desc()).first()
+    intelligence_record = VerticalIntelligence.query.filter_by(vertical_id=vertical_id).order_by(VerticalIntelligence.generated_at.desc()).first()
 
     contributors = db.session.query(User).join(Message, User.id == Message.user_id).filter(
         Message.vertical_id == vertical_id, Message.role == 'user'
@@ -844,6 +845,16 @@ def build_export_data(vertical_id):
             "content": fb.content,
             "user": User.query.get(fb.user_id).display_name if fb.user_id else "Unknown"
         } for fb in feedback_entries]
+
+    intelligence_data = None
+    if intelligence_record and intelligence_record.intelligence_data:
+        try:
+            intelligence_data = json.loads(intelligence_record.intelligence_data)
+        except json.JSONDecodeError:
+            intelligence_data = {"raw": intelligence_record.intelligence_data}
+
+    from ai_service import build_validated_facts
+    validated_facts = build_validated_facts(vertical_id)
 
     return {
         "vertical": {
@@ -869,9 +880,11 @@ def build_export_data(vertical_id):
             "category": n.category,
             "author": User.query.get(n.user_id).display_name if n.user_id else "Unknown"
         } for n in notes],
+        "intelligence": intelligence_data,
         "process_map": map_data,
         "process_map_feedback": feedback_data,
         "contributors": [{"name": c.display_name, "email": c.email} for c in contributors],
+        "validated_facts": validated_facts,
         "exported_at": datetime.utcnow().isoformat()
     }
 
@@ -958,6 +971,26 @@ def build_markdown_export(export_data):
     return "\n".join(lines)
 
 
+@api_routes.route("/admin/cross-vertical-analysis")
+@admin_required
+def cross_vertical_analysis():
+    from ai_service import generate_cross_vertical_analysis
+
+    try:
+        analysis = generate_cross_vertical_analysis()
+        if not analysis:
+            return jsonify({"error": "Need intelligence for at least two verticals before cross-vertical analysis can be generated."}), 400
+
+        try:
+            parsed = json.loads(analysis)
+        except json.JSONDecodeError:
+            parsed = {"raw": analysis}
+
+        return jsonify(parsed)
+    except Exception as e:
+        return jsonify({"error": f"Cross-vertical analysis failed: {str(e)}"}), 500
+
+
 @admin_routes.route("/api/export/<vertical_id>")
 @admin_required
 def export_vertical(vertical_id):
@@ -973,6 +1006,17 @@ def export_vertical(vertical_id):
             mimetype='text/markdown',
             as_attachment=True,
             download_name=f"{vertical_id}_export.md"
+        )
+
+    if fmt == "automation_brief":
+        from ai_service import generate_automation_brief
+
+        brief = generate_automation_brief(export_data.get("intelligence"), export_data)
+        return send_file(
+            io.BytesIO(brief.encode('utf-8')),
+            mimetype='text/markdown',
+            as_attachment=True,
+            download_name=f"{vertical_id}_automation_brief.md"
         )
 
     return send_file(
@@ -995,6 +1039,8 @@ def export_all():
                 zf.writestr(f"{v.id}_export.json", json.dumps(export_data, indent=2))
                 md = build_markdown_export(export_data)
                 zf.writestr(f"{v.id}_export.md", md)
+                from ai_service import generate_automation_brief
+                zf.writestr(f"{v.id}_automation_brief.md", generate_automation_brief(export_data.get("intelligence"), export_data))
 
     zip_buffer.seek(0)
     return send_file(

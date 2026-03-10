@@ -476,32 +476,11 @@ async function loadIntelligence() {
 window.regenerateProcessMap = async function() {
     const btn = document.querySelector('.intel-regen-map-btn');
     if (btn) btn.disabled = true;
-    const loading = document.getElementById('intel-loading');
-    loading.style.display = 'block';
     try {
-        const res = await fetch('/api/process-map/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ verticalId: VERTICAL_ID })
-        });
-        if (!res.ok) {
-            const err = await res.json();
-            alert(err.error || 'Could not generate process map.');
-            return;
-        }
-        const data = await res.json();
-        currentMapId = data.id;
-        const mapData = data.map_data && data.map_data.processMap ? data.map_data.processMap : (data.map_data && data.map_data.steps ? data.map_data : { steps: [] });
-        if (intelligenceData) {
-            intelligenceData.processMap = mapData;
-            renderProcessMap(mapData);
-        } else {
-            renderProcessMap(mapData);
-        }
+        await refreshIntelligence();
     } catch (e) {
         alert('Failed to regenerate process map. Please try again.');
     } finally {
-        loading.style.display = 'none';
         if (btn) btn.disabled = false;
     }
 };
@@ -545,12 +524,14 @@ window.refreshIntelligence = async function() {
 
 function renderIntelligence(data) {
     renderBusinessProfile(data.businessProfile || {});
+    renderBusinessModelCanvas(data.businessModelCanvas || {});
     renderKnowledgeGaps(data.knowledgeGaps || []);
-    renderProcessMap(data.processMap || {});
+    renderServiceBlueprint(data.serviceBlueprint || {});
     renderPainPoints(data.painPoints || []);
-    renderTeamStructure(data.team || []);
-    renderToolsInventory(data.tools || []);
-    renderContextCoverage(data.coverage || {});
+    renderTeamStructure(data.teamStructure || []);
+    renderToolsInventory(data.toolsInventory || []);
+    renderContextCoverage(data.contextCoverage || {});
+    renderAutomationReadiness(data.automationReadiness || {});
 }
 
 function profileFieldLabel(key) {
@@ -567,18 +548,42 @@ function profileFieldLabel(key) {
     return labels[key] || key;
 }
 
+function formatDisplayValue(value) {
+    if (value == null || value === '') return '<span class="intel-muted">Not yet captured</span>';
+    if (Array.isArray(value)) {
+        return value.length ? escapeHtml(value.join(', ')) : '<span class="intel-muted">Not yet captured</span>';
+    }
+    if (typeof value === 'object') {
+        const parts = Object.entries(value)
+            .filter(([, v]) => v != null && v !== '')
+            .map(([k, v]) => `${labelize(k)}: ${Array.isArray(v) ? v.join(', ') : v}`);
+        return parts.length ? escapeHtml(parts.join(' | ')) : '<span class="intel-muted">Not yet captured</span>';
+    }
+    return escapeHtml(String(value));
+}
+
+function labelize(value) {
+    return String(value)
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/[_-]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
 function renderBusinessProfile(profile) {
     const container = document.getElementById('intel-business-profile');
     const fields = ['whatTheyDo', 'businessModel', 'geography', 'scale', 'keyClients', 'teamSize', 'primaryLanguages', 'communicationChannels'];
 
     const fieldsHtml = fields.map(field => {
         const value = profile[field];
-        const displayValue = value ? escapeHtml(String(value)) : '<span class="intel-muted">Not yet captured</span>';
+        const editableValue = typeof value === 'string' ? value : '';
+        const displayValue = formatDisplayValue(value);
         return `
             <div class="intel-profile-field" data-field="${field}">
                 <div class="intel-profile-label">${profileFieldLabel(field)}</div>
                 <div class="intel-profile-value" id="profile-val-${field}">${displayValue}</div>
-                <button class="intel-edit-btn" onclick="editBusinessField('${field}', ${value ? "'" + escapeHtml(String(value)).replace(/'/g, "\\'") + "'" : 'null'})" title="Edit">✏️</button>
+                <button class="intel-edit-btn" onclick="editBusinessField('${field}', ${editableValue ? "'" + escapeHtml(String(editableValue)).replace(/'/g, "\\'") + "'" : 'null'})" title="Edit">✏️</button>
             </div>
         `;
     }).join('');
@@ -588,6 +593,96 @@ function renderBusinessProfile(profile) {
             <h3>📋 Business Profile</h3>
         </div>
         <div class="intel-profile-grid">${fieldsHtml}</div>
+    `;
+}
+
+function renderBusinessModelCanvas(canvas) {
+    const container = document.getElementById('intel-business-model-canvas');
+    const valueProp = canvas.valueProposition || {};
+    const revenue = canvas.revenueModel || {};
+    const resources = canvas.keyResources || {};
+    const costStructure = canvas.costStructure || {};
+    const competitive = canvas.competitivePosition || {};
+    const activities = canvas.keyActivities || [];
+
+    const activitiesHtml = activities.length ? activities.map(activity => {
+        const cost = (activity.costIntensity || 'low').toLowerCase();
+        const readiness = (activity.automationReady || 'low').toLowerCase();
+        return `
+            <div class="intel-canvas-activity cost-${cost}">
+                <div class="intel-canvas-activity-top">
+                    <strong>${escapeHtml(activity.activity || 'Unknown activity')}</strong>
+                    <span class="intel-canvas-cost cost-${cost}">${cost.toUpperCase()} COST</span>
+                </div>
+                <div class="intel-canvas-activity-meta">${escapeHtml(activity.category || 'operations')}</div>
+                ${activity.peopleInvolved ? `<div class="intel-canvas-activity-detail">👥 ${escapeHtml(activity.peopleInvolved)}</div>` : ''}
+                ${activity.timePerWeek ? `<div class="intel-canvas-activity-detail">⏱ ${escapeHtml(activity.timePerWeek)}</div>` : ''}
+                ${activity.whyItMatters ? `<p class="intel-canvas-activity-why">${escapeHtml(activity.whyItMatters)}</p>` : ''}
+                <span class="intel-canvas-readiness readiness-${readiness}">Automation: ${readiness}</span>
+            </div>
+        `;
+    }).join('') : '<p class="intel-muted">No key activities captured yet.</p>';
+
+    const renderKeyValueList = (items) => Object.entries(items)
+        .filter(([, value]) => value)
+        .map(([key, value]) => `<div class="intel-canvas-line"><span>${labelize(key)}</span><strong>${escapeHtml(Array.isArray(value) ? value.join(', ') : String(value))}</strong></div>`)
+        .join('');
+
+    container.innerHTML = `
+        <div class="intel-card-header"><h3>💼 Business Model Canvas</h3></div>
+        <div class="intel-canvas-grid">
+            <div class="intel-canvas-card">
+                <h4>Value Proposition</h4>
+                <div class="intel-canvas-two-col">
+                    <div class="intel-canvas-value-box">
+                        <span class="intel-canvas-label">To Clients</span>
+                        <p>${valueProp.toClients ? escapeHtml(valueProp.toClients) : '<span class="intel-muted">Not yet captured</span>'}</p>
+                    </div>
+                    <div class="intel-canvas-value-box">
+                        <span class="intel-canvas-label">To Workers / Users</span>
+                        <p>${valueProp.toWorkers ? escapeHtml(valueProp.toWorkers) : '<span class="intel-muted">Not yet captured</span>'}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="intel-canvas-card">
+                <h4>Revenue Model</h4>
+                ${renderKeyValueList({
+                    pricingMechanism: revenue.pricingMechanism || 'Not yet captured',
+                    averageTicketSize: revenue.averageTicketSize || 'Not yet captured',
+                    paymentTerms: revenue.paymentTerms || 'Not yet captured',
+                    marginStructure: revenue.marginStructure || 'Not yet captured'
+                })}
+            </div>
+            <div class="intel-canvas-card intel-canvas-span-2">
+                <h4>Key Activities</h4>
+                <div class="intel-canvas-activities">${activitiesHtml}</div>
+            </div>
+            <div class="intel-canvas-card">
+                <h4>Key Resources</h4>
+                ${renderKeyValueList({
+                    people: resources.people || 'Not yet captured',
+                    technology: resources.technology || 'Not yet captured',
+                    data: resources.data || 'Not yet captured',
+                    relationships: resources.relationships || 'Not yet captured'
+                })}
+            </div>
+            <div class="intel-canvas-card">
+                <h4>Cost Structure</h4>
+                <div class="intel-canvas-list">
+                    ${(costStructure.biggestCostDrivers || []).map(item => `<div class="intel-canvas-list-item">${escapeHtml(item)}</div>`).join('') || '<div class="intel-muted">No cost drivers captured yet.</div>'}
+                </div>
+                ${costStructure.fixedVsVariable ? `<div class="intel-canvas-line"><span>Fixed vs Variable</span><strong>${escapeHtml(costStructure.fixedVsVariable)}</strong></div>` : ''}
+                ${costStructure.unitEconomics ? `<div class="intel-canvas-line"><span>Unit Economics</span><strong>${escapeHtml(costStructure.unitEconomics)}</strong></div>` : ''}
+            </div>
+            <div class="intel-canvas-card intel-canvas-span-2">
+                <h4>Competitive Position</h4>
+                <div class="intel-canvas-three-col">
+                    <div><span class="intel-canvas-label">Competitors</span><p>${competitive.competitors && competitive.competitors.length ? escapeHtml(competitive.competitors.join(', ')) : '<span class="intel-muted">Not yet captured</span>'}</p></div>
+                    <div><span class="intel-canvas-label">Defensibility</span><p>${competitive.defensibility ? escapeHtml(competitive.defensibility) : '<span class="intel-muted">Not yet captured</span>'}</p></div>
+                    <div><span class="intel-canvas-label">Vulnerability</span><p>${competitive.vulnerability ? escapeHtml(competitive.vulnerability) : '<span class="intel-muted">Not yet captured</span>'}</p></div>
+                </div>
+            </div>
+        </div>
     `;
 }
 
@@ -628,59 +723,224 @@ function renderKnowledgeGaps(gaps) {
     `;
 }
 
-function renderProcessMap(processMap) {
-    const container = document.getElementById('intel-process-map');
-    const steps = processMap.steps || [];
+function parseCostEstimateToNumber(costString) {
+    if (!costString) return null;
+    const normalized = String(costString).toLowerCase().replace(/,/g, '');
+    const match = normalized.match(/(\d+(\.\d+)?)/);
+    if (!match) return null;
+    const value = parseFloat(match[1]);
+    if (Number.isNaN(value)) return null;
+    if (normalized.includes('lakh')) return value * 100000;
+    if (normalized.includes('million') || normalized.includes(' mn')) return value * 1000000;
+    if (normalized.includes('k')) return value * 1000;
+    return value;
+}
 
-    if (!steps.length) {
+function formatCurrencyAmount(amount, symbol = '₹') {
+    if (amount == null) return 'Not estimated';
+    if (symbol === 'RM') return `~RM${(amount / 1000).toFixed(1)}k/month`;
+    if (symbol === 'Rp') return `~Rp${(amount / 1000000).toFixed(1)}M/month`;
+    return `~₹${(amount / 100000).toFixed(1)} lakh/month`;
+}
+
+function getCostSymbol(stages) {
+    for (const stage of stages) {
+        const cost = (((stage || {}).opsTeamWork || {}).costEstimate || {}).estimatedMonthlyCost || '';
+        if (cost.includes('RM')) return 'RM';
+        if (cost.includes('Rp')) return 'Rp';
+    }
+    return '₹';
+}
+
+function buildServiceBlueprintCostSummary(serviceBlueprint) {
+    const stages = serviceBlueprint.stages || [];
+    const stageCosts = stages.map(stage => {
+        const costInfo = ((stage.opsTeamWork || {}).costEstimate) || {};
+        return {
+            stageName: stage.stageName || 'Stage',
+            raw: costInfo.estimatedMonthlyCost,
+            numeric: parseCostEstimateToNumber(costInfo.estimatedMonthlyCost),
+        };
+    }).filter(item => item.numeric != null);
+
+    if (!stageCosts.length) return null;
+
+    const symbol = getCostSymbol(stages);
+    const total = stageCosts.reduce((sum, item) => sum + item.numeric, 0);
+    const topStages = [...stageCosts].sort((a, b) => b.numeric - a.numeric).slice(0, 3);
+    const lowSavings = total * 0.6;
+    const highSavings = total * 0.7;
+
+    return {
+        symbol,
+        total,
+        totalLabel: formatCurrencyAmount(total, symbol),
+        topStages,
+        savingsLabel: `${formatCurrencyAmount(lowSavings, symbol)} to ${formatCurrencyAmount(highSavings, symbol)}`,
+    };
+}
+
+function buildCostVerificationPrompt(stageName, costBasis, estimate) {
+    return `Please verify this ops cost estimate for ${stageName}: ${estimate || 'unknown estimate'}. Math used: ${costBasis || 'no math captured yet'}.`;
+}
+
+function renderServiceBlueprint(serviceBlueprint) {
+    const container = document.getElementById('intel-service-blueprint');
+    const stages = serviceBlueprint.stages || [];
+
+    if (!stages.length) {
         container.innerHTML = `
-            <div class="intel-card-header"><h3>🗺️ Process Map</h3></div>
-            <p class="intel-muted">No process steps identified yet. Add more context to generate a process map.</p>
+            <div class="intel-card-header"><h3>🗺️ Service Blueprint</h3></div>
+            <p class="intel-muted">No service blueprint captured yet. Add more context to generate the operational lanes.</p>
         `;
         return;
     }
 
-    const stepsHtml = steps.map((step, idx) => {
-        const painLevel = (step.painLevel || 'low').toLowerCase();
-        const painBorderClass = `intel-pain-${painLevel}`;
-        const autoPotential = (step.automationPotential || 'low').toLowerCase();
-        const autoClass = `intel-auto-${autoPotential}`;
-        const confidence = step.confidence || 'medium';
-        const stepNum = step.stepNumber || (idx + 1);
+    const summary = buildServiceBlueprintCostSummary(serviceBlueprint);
+    const summaryHtml = summary ? `
+        <div class="intel-cost-summary">
+            <div class="intel-cost-summary-main">📊 Estimated Total Monthly Ops Cost: <strong>${summary.totalLabel}</strong></div>
+            <div class="intel-cost-summary-sub">Highest cost stages: ${summary.topStages.map(item => `${escapeHtml(item.stageName)} (${formatCurrencyAmount(item.numeric, summary.symbol)})`).join(' | ')}</div>
+            <div class="intel-cost-summary-sub">Potential savings from automation: ${summary.savingsLabel}</div>
+        </div>
+    ` : '';
+
+    const stagesHtml = stages.map((stage, idx) => {
+        const customer = stage.customerJourney || {};
+        const worker = stage.workerJourney || {};
+        const ops = stage.opsTeamWork || {};
+        const cost = ops.costEstimate || {};
+        const readiness = ((stage.automationOpportunity || {}).readiness || 'low').toLowerCase();
+        const confidence = (cost.confidence || 'low').toLowerCase();
+        const stepNum = idx + 1;
+        const verifyPrompt = buildCostVerificationPrompt(stage.stageName || `Stage ${stepNum}`, cost.costBasis, cost.estimatedMonthlyCost);
 
         return `
-            ${idx > 0 ? '<div class="connector"><div class="connector-line"></div></div>' : ''}
-            <div class="intel-step-card ${painBorderClass}">
-                <div class="intel-step-header">
+            <div class="intel-blueprint-stage">
+                <div class="intel-blueprint-stage-header">
                     <div class="intel-step-number" style="background:${VERTICAL_COLOR}22;color:${VERTICAL_COLOR}">${stepNum}</div>
-                    <div class="intel-step-name">${escapeHtml(step.name || '')}</div>
-                    <span class="intel-confidence-tag confidence-${confidence}">${confidence}</span>
+                    <div>
+                        <div class="intel-step-name">${escapeHtml(stage.stageName || `Stage ${stepNum}`)}</div>
+                        <div class="intel-blueprint-stage-subtitle">${escapeHtml(serviceBlueprint.processName || 'Core process')}</div>
+                    </div>
+                    <span class="intel-auto-badge intel-auto-${readiness}">⚡ ${readiness} readiness</span>
                 </div>
-                <div class="intel-step-desc">${escapeHtml(step.description || '')}</div>
-                <div class="intel-step-badges">
-                    ${step.owner ? `<span class="intel-badge">👤 ${escapeHtml(step.owner)}</span>` : ''}
-                    ${step.toolsUsed && step.toolsUsed.length ? `<span class="intel-badge">🔧 ${step.toolsUsed.map(t => escapeHtml(t)).join(', ')}</span>` : ''}
-                    ${step.estimatedTime ? `<span class="intel-badge">⏱ ${escapeHtml(step.estimatedTime)}</span>` : ''}
-                    ${step.volume ? `<span class="intel-badge">📊 ${escapeHtml(step.volume)}</span>` : ''}
-                    <span class="intel-auto-badge ${autoClass}">⚡ ${autoPotential} automation</span>
+                <div class="intel-blueprint-grid">
+                    <div class="intel-blueprint-lane">
+                        <span class="intel-canvas-label">Client / Customer</span>
+                        <p>${customer.action ? escapeHtml(customer.action) : '<span class="intel-muted">Not yet captured</span>'}</p>
+                        ${customer.goal ? `<div class="intel-blueprint-detail">Goal: ${escapeHtml(customer.goal)}</div>` : ''}
+                    </div>
+                    <div class="intel-blueprint-lane">
+                        <span class="intel-canvas-label">Worker / Candidate</span>
+                        <p>${worker.action ? escapeHtml(worker.action) : '<span class="intel-muted">Not yet captured</span>'}</p>
+                        ${worker.friction ? `<div class="intel-blueprint-detail">Friction: ${escapeHtml(worker.friction)}</div>` : ''}
+                    </div>
+                    <div class="intel-blueprint-lane intel-blueprint-ops">
+                        <span class="intel-canvas-label">Ops Team Work</span>
+                        <p>${ops.action ? escapeHtml(ops.action) : '<span class="intel-muted">Not yet captured</span>'}</p>
+                        <div class="intel-step-badges">
+                            ${ops.owner ? `<span class="intel-badge">👤 ${escapeHtml(ops.owner)}</span>` : ''}
+                            ${ops.teamSize ? `<span class="intel-badge">👥 ${escapeHtml(ops.teamSize)}</span>` : ''}
+                            ${ops.hoursPerDay ? `<span class="intel-badge">⏱ ${escapeHtml(ops.hoursPerDay)} hrs/day</span>` : ''}
+                            ${ops.toolsUsed && ops.toolsUsed.length ? `<span class="intel-badge">🔧 ${ops.toolsUsed.map(tool => escapeHtml(tool)).join(', ')}</span>` : ''}
+                        </div>
+                        ${ops.painPoint ? `<div class="intel-blueprint-detail">Pain point: ${escapeHtml(ops.painPoint)}</div>` : ''}
+                        ${cost.estimatedMonthlyCost ? `
+                            <div class="intel-cost-badge confidence-${confidence}">
+                                <span>💰 ${escapeHtml(cost.estimatedMonthlyCost)}</span>
+                                <span class="intel-cost-basis">${escapeHtml(cost.costBasis || '')}</span>
+                                <a href="#" onclick="discussInChat('${escapeHtml(verifyPrompt).replace(/'/g, "\\'")}'); return false;">Verify this</a>
+                            </div>
+                        ` : ''}
+                    </div>
                 </div>
-                ${step.automationIdea ? `<p class="intel-step-idea">💡 ${escapeHtml(step.automationIdea)}</p>` : ''}
-                <div class="intel-step-feedback">
-                    <button class="intel-fb-btn intel-fb-correct" onclick="submitIntelStepFeedback(${stepNum}, 'correct')">✓ Correct</button>
-                    <button class="intel-fb-btn intel-fb-partial" onclick="showIntelFeedbackForm(${stepNum}, 'partially_correct')">⚠ Partially Right</button>
-                    <button class="intel-fb-btn intel-fb-wrong" onclick="showIntelFeedbackForm(${stepNum}, 'wrong')">✗ Wrong</button>
-                </div>
-                <div class="intel-fb-form" id="intel-fb-form-${stepNum}" style="display:none">
-                    <textarea id="intel-fb-input-${stepNum}" placeholder="What needs correction?" rows="2"></textarea>
-                    <button class="primary-btn" style="background:${VERTICAL_COLOR};padding:6px 14px;font-size:12px" onclick="submitIntelStepFeedbackWithText(${stepNum})">Submit</button>
-                </div>
+                ${(stage.automationOpportunity || {}).idea ? `<div class="intel-step-idea">Automation idea: ${escapeHtml(stage.automationOpportunity.idea)}</div>` : ''}
+                ${stage.validationQuestions && stage.validationQuestions.length ? `<div class="intel-blueprint-questions">${stage.validationQuestions.map(question => `<span class="intel-badge">❓ ${escapeHtml(question)}</span>`).join('')}</div>` : ''}
             </div>
         `;
     }).join('');
 
     container.innerHTML = `
-        <div class="intel-card-header"><h3>🗺️ Process Map</h3><span class="intel-card-subtitle">${escapeHtml(processMap.processName || '')}</span></div>
-        ${stepsHtml}
+        <div class="intel-card-header"><h3>🗺️ Service Blueprint</h3><span class="intel-card-subtitle">${escapeHtml(serviceBlueprint.processName || '')}</span></div>
+        ${summaryHtml}
+        ${stagesHtml}
+    `;
+}
+
+function scoreClass(score) {
+    if (score >= 70) return 'score-good';
+    if (score >= 40) return 'score-medium';
+    return 'score-low';
+}
+
+function renderAutomationReadiness(readiness) {
+    const container = document.getElementById('intel-automation-readiness');
+    if (!readiness || Object.keys(readiness).length === 0) {
+        container.innerHTML = `
+            <div class="intel-card-header"><h3>🤖 Automation Readiness</h3></div>
+            <p class="intel-muted">No readiness score has been generated yet.</p>
+        `;
+        return;
+    }
+
+    const dimensions = [
+        ['Context Completeness', readiness.contextCompleteness || {}],
+        ['Process Clarity', readiness.processClarity || {}],
+        ['Data Availability', readiness.dataAvailability || {}],
+        ['Team Readiness', readiness.teamReadiness || {}],
+    ];
+
+    const dimensionHtml = dimensions.map(([label, item]) => {
+        const score = Number(item.score || 0);
+        return `
+            <div class="intel-readiness-row">
+                <div class="intel-readiness-label">${label}</div>
+                <div class="intel-readiness-bar">
+                    <div class="intel-readiness-fill ${scoreClass(score)}" style="width:${Math.max(0, Math.min(100, score))}%"></div>
+                </div>
+                <div class="intel-readiness-score">${score}%</div>
+                <div class="intel-readiness-detail">${escapeHtml(item.detail || 'No detail captured')}</div>
+            </div>
+        `;
+    }).join('');
+
+    const candidates = readiness.topAutomationCandidates || [];
+    const blockers = readiness.blockers || [];
+    const nextSteps = readiness.recommendedNextSteps || [];
+
+    container.innerHTML = `
+        <div class="intel-card-header">
+            <h3>🤖 Automation Readiness</h3>
+            <span class="intel-readiness-overall ${scoreClass(Number(readiness.overallScore || 0))}">Overall: ${Number(readiness.overallScore || 0)}/100</span>
+        </div>
+        <div class="intel-readiness-grid">${dimensionHtml}</div>
+        <div class="intel-readiness-candidates">
+            <h4>Top Automation Candidates</h4>
+            ${candidates.length ? candidates.map(candidate => `
+                <div class="intel-readiness-candidate">
+                    <div class="intel-readiness-candidate-header">
+                        <strong>#${escapeHtml(String(candidate.priority || '–'))} ${escapeHtml(candidate.process || 'Unknown process')}</strong>
+                        <span class="priority-badge high">Priority</span>
+                    </div>
+                    <div class="intel-readiness-candidate-line">Current cost: ${escapeHtml(candidate.currentMonthlyCost || 'Unknown')}</div>
+                    <div class="intel-readiness-candidate-line">Agent type: ${escapeHtml(candidate.automationType || 'Unknown')}</div>
+                    <div class="intel-readiness-candidate-line">Expected savings: ${escapeHtml(candidate.estimatedSavings || 'Unknown')}</div>
+                    <div class="intel-readiness-candidate-line">Time to build: ${escapeHtml(candidate.timeToImplement || 'Unknown')}</div>
+                    <div class="intel-readiness-candidate-line">Prerequisite: ${escapeHtml(candidate.prerequisite || 'None captured')}</div>
+                </div>
+            `).join('') : '<p class="intel-muted">No automation candidates captured yet.</p>'}
+        </div>
+        <div class="intel-readiness-footer">
+            <div class="intel-readiness-footer-card">
+                <span class="intel-canvas-label">🚫 Blockers</span>
+                <p>${blockers.length ? escapeHtml(blockers.join(' | ')) : '<span class="intel-muted">No blockers captured</span>'}</p>
+            </div>
+            <div class="intel-readiness-footer-card">
+                <span class="intel-canvas-label">📋 Next Steps</span>
+                <p>${nextSteps.length ? escapeHtml(nextSteps.join(' | ')) : '<span class="intel-muted">No next steps captured</span>'}</p>
+            </div>
+        </div>
     `;
 }
 

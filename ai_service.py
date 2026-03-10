@@ -3,6 +3,7 @@ import io
 import json
 import base64
 import threading
+import re
 from anthropic import Anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 import hashlib
@@ -13,6 +14,159 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 client = Anthropic(
     api_key=ANTHROPIC_API_KEY,
 )
+
+DISCOVERY_PHASES = [
+    {
+        "phase": "Business Model & Scale",
+        "keywords": [
+            "revenue", "pricing", "client", "customer", "margin", "volume",
+            "ticket", "deal", "payment", "scale", "business model"
+        ],
+    },
+    {
+        "phase": "Supply Side",
+        "keywords": [
+            "worker", "candidate", "sourcing", "recruitment", "hiring",
+            "screening", "onboarding", "qualification", "pool"
+        ],
+    },
+    {
+        "phase": "Matching & Deployment",
+        "keywords": [
+            "matching", "allocation", "deployment", "assignment", "shift",
+            "dispatch", "placement", "fulfillment", "schedule"
+        ],
+    },
+    {
+        "phase": "Money Flow",
+        "keywords": [
+            "payroll", "payout", "billing", "invoice", "payment", "salary",
+            "commission", "reconciliation", "settlement"
+        ],
+    },
+    {
+        "phase": "Team & Operations",
+        "keywords": [
+            "team", "ops", "manager", "qc", "quality", "review", "admin",
+            "headcount", "manual", "compliance", "support"
+        ],
+    },
+]
+
+
+def safe_json_loads(raw_value, default=None):
+    if raw_value is None:
+        return {} if default is None else default
+    if isinstance(raw_value, (dict, list)):
+        return raw_value
+    try:
+        return json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return {} if default is None else default
+
+
+def get_currency_context(vertical):
+    geography = (vertical.geography or "").lower()
+    if "malaysia" in geography or "singapore" in geography:
+        return {"symbol": "RM", "monthly_salary": 3500, "hourly_salary": 3500 / 176, "salary_text": "~RM3,500/month"}
+    if "indonesia" in geography:
+        return {"symbol": "Rp", "monthly_salary": 5000000, "hourly_salary": 5000000 / 176, "salary_text": "~Rp5,000,000/month"}
+    return {"symbol": "₹", "monthly_salary": 25000, "hourly_salary": 25000 / 176, "salary_text": "~₹25,000/month"}
+
+
+def build_validated_facts(vertical_id):
+    facts = []
+    feedback_entries = IntelligenceFeedback.query.filter_by(vertical_id=vertical_id).order_by(IntelligenceFeedback.created_at.desc()).all()
+    for fb in feedback_entries:
+        if fb.feedback_type in {"correct", "edit"}:
+            field_label = fb.field_path or fb.section or "general"
+            if fb.corrected_value:
+                facts.append(f"{field_label}: {fb.corrected_value}")
+            elif fb.original_value:
+                facts.append(f"{field_label}: {fb.original_value}")
+        elif fb.feedback_type == "partially_correct" and fb.corrected_value:
+            facts.append(f"{fb.field_path or fb.section}: {fb.corrected_value}")
+
+    notes = Note.query.filter_by(vertical_id=vertical_id).order_by(Note.created_at.desc()).all()
+    for note in notes:
+        if note.content.startswith("[Knowledge Gap Answer]"):
+            facts.append(note.content.replace("[Knowledge Gap Answer] ", "").strip())
+
+    deduped = []
+    seen = set()
+    for fact in facts:
+        normalized = fact.strip().lower()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            deduped.append(fact.strip())
+    return deduped[:12]
+
+
+def compute_discovery_coverage(vertical_id):
+    messages = Message.query.filter_by(vertical_id=vertical_id).all()
+    all_text = " ".join((m.content or "").lower() for m in messages)
+    coverage = []
+    for phase in DISCOVERY_PHASES:
+        keywords = phase["keywords"]
+        hits = sum(1 for keyword in keywords if keyword in all_text)
+        total = len(keywords) or 1
+        percentage = min(100, int((hits / total) * 130))
+        if percentage > 60:
+            status = "well_covered"
+            detail = "well covered"
+        elif percentage > 25:
+            status = "partial"
+            detail = "partially covered"
+        else:
+            status = "not_covered"
+            detail = "not yet discussed"
+        coverage.append({
+            "phase": phase["phase"],
+            "percentage": percentage,
+            "status": status,
+            "detail": detail,
+        })
+    return coverage
+
+
+def build_chat_intelligence_context(vertical_id):
+    latest_intel = VerticalIntelligence.query.filter_by(vertical_id=vertical_id).order_by(VerticalIntelligence.generated_at.desc()).first()
+    intelligence = safe_json_loads(latest_intel.intelligence_data if latest_intel else None, default={})
+    confirmed_facts = build_validated_facts(vertical_id)
+    coverage = compute_discovery_coverage(vertical_id)
+    least_covered = [item["phase"] for item in coverage if item["status"] != "well_covered"][:2]
+    knowledge_gaps = intelligence.get("knowledgeGaps") or []
+
+    sections = []
+
+    if confirmed_facts:
+        sections.append("CONFIRMED FACTS (do not re-ask these):")
+        sections.extend(f"- {fact}" for fact in confirmed_facts[:8])
+
+    if knowledge_gaps:
+        sections.append("")
+        sections.append("VALIDATION / OPEN QUESTIONS:")
+        for gap in knowledge_gaps[:5]:
+            if isinstance(gap, dict):
+                question = gap.get("question") or gap.get("content") or str(gap)
+            else:
+                question = str(gap)
+            sections.append(f"- {question}")
+
+    if coverage:
+        sections.append("")
+        sections.append("DISCOVERY COVERAGE:")
+        status_icon = {"well_covered": "✅", "partial": "⚠️", "not_covered": "❌"}
+        for item in coverage:
+            sections.append(
+                f"{status_icon[item['status']]} {item['phase']} — {item['detail']} ({item['percentage']}%)"
+            )
+
+    if least_covered:
+        sections.append("")
+        sections.append(f"PRIORITY: Focus the next few questions on {', '.join(least_covered)}.")
+
+    return "\n".join(sections).strip()
 
 
 def is_rate_limit_error(exception):
@@ -26,7 +180,7 @@ def is_rate_limit_error(exception):
     )
 
 
-def get_chat_system_prompt(vertical):
+def get_chat_system_prompt(vertical, intelligence_context=""):
     return f"""You are an AI process analyst working for BetterPlace Group's Central AI Labs team. You are conducting a structured intake to understand the operations of {vertical.name} ({vertical.geography} — {vertical.type}).
 
 {vertical.seed_context}
@@ -57,7 +211,10 @@ INTERVIEW STYLE:
 
 START by greeting them warmly, acknowledging their organization, and asking them to describe what their business actually does in their own words — even if the seed context already describes it. Their perspective matters.
 
-CRITICAL: You are gathering intelligence to help build AI automation. Pay extra attention to manual, repetitive, time-consuming activities — those are the highest-value automation targets. When you hear something manual, always ask: how long does it take, how often, and how many people are involved."""
+CRITICAL: You are gathering intelligence to help build AI automation. Pay extra attention to manual, repetitive, time-consuming activities — those are the highest-value automation targets. When you hear something manual, always ask: how long does it take, how often, and how many people are involved.
+
+{intelligence_context or ""}
+"""
 
 
 @retry(
@@ -67,7 +224,8 @@ CRITICAL: You are gathering intelligence to help build AI automation. Pay extra 
     reraise=True
 )
 def send_chat_message(vertical, messages_history, user_message):
-    system_prompt = get_chat_system_prompt(vertical)
+    intelligence_context = build_chat_intelligence_context(vertical.id)
+    system_prompt = get_chat_system_prompt(vertical, intelligence_context)
 
     api_messages = []
     for msg in messages_history:
@@ -488,6 +646,87 @@ Return ONLY valid JSON (no markdown, no backticks):
     "primaryLanguages": ["Languages"] or null,
     "communicationChannels": ["Channels"] or null
   }},
+  "businessModelCanvas": {{
+    "valueProposition": {{
+      "toClients": "What clients pay for or null",
+      "toWorkers": "What workers/candidates/end users get or null"
+    }},
+    "revenueModel": {{
+      "pricingMechanism": "How pricing works or null",
+      "averageTicketSize": "Typical deal size or null",
+      "paymentTerms": "When clients pay or null",
+      "marginStructure": "Where margin comes from and where it leaks or null"
+    }},
+    "keyActivities": [
+      {{
+        "activity": "Activity name",
+        "category": "supply_acquisition|demand_fulfillment|operations|compliance|support",
+        "peopleInvolved": "How many people and which roles, or null",
+        "timePerWeek": "Estimated hours per week or null",
+        "costIntensity": "low|medium|high",
+        "automationReady": "low|medium|high",
+        "whyItMatters": "Why this activity is critical"
+      }}
+    ],
+    "keyResources": {{
+      "people": "Team description or null",
+      "technology": "Systems, apps, platforms or null",
+      "data": "What unique data they have that could power AI or null",
+      "relationships": "Key client or partner relationships or null"
+    }},
+    "costStructure": {{
+      "biggestCostDrivers": ["Top 3-4 cost items"],
+      "fixedVsVariable": "Mostly fixed or variable or null",
+      "unitEconomics": "Revenue minus cost per unit, if known, or null"
+    }},
+    "competitivePosition": {{
+      "competitors": ["Known competitors"] or null,
+      "defensibility": "What makes them hard to replace or null",
+      "vulnerability": "Where they could lose to competition or disruption or null"
+    }}
+  }},
+  "serviceBlueprint": {{
+    "processName": "Name of the core journey",
+    "costSummary": {{
+      "estimatedTotalMonthlyCost": "Approx total monthly ops cost string or null",
+      "highestCostStages": ["Stage name — cost string"],
+      "potentialSavings": "Estimated savings range from automation or null"
+    }},
+    "stages": [
+      {{
+        "stageName": "Stage name",
+        "customerJourney": {{
+          "action": "What the client/customer experiences",
+          "goal": "Why they do it or null"
+        }},
+        "workerJourney": {{
+          "action": "What the worker/candidate/end user does",
+          "friction": "Where they struggle or wait, or null"
+        }},
+        "opsTeamWork": {{
+          "action": "What the ops team does",
+          "owner": "Role/team",
+          "teamSize": "Number of people or null",
+          "hoursPerDay": "Hours spent per day per person or null",
+          "toolsUsed": ["Tools"],
+          "isManual": true,
+          "painPoint": "What's frustrating or null",
+          "costEstimate": {{
+            "monthlyHours": "Total person-hours per month or null",
+            "estimatedMonthlyCost": "Formatted monthly cost or null",
+            "costBasis": "Math behind the estimate or null",
+            "confidence": "high|medium|low"
+          }}
+        }},
+        "automationOpportunity": {{
+          "readiness": "low|medium|high",
+          "idea": "How AI could help or null",
+          "expectedImpact": "Expected impact or null"
+        }},
+        "validationQuestions": ["Specific questions to verify this stage"]
+      }}
+    ]
+  }},
   "processMap": {{
     "processName": "Name of the core process",
     "steps": [
@@ -537,25 +776,90 @@ Return ONLY valid JSON (no markdown, no backticks):
   ],
   "knowledgeGaps": ["Specific questions about what is still missing"],
   "contextCoverage": {{
-    "businessOverview": true/false,
-    "clientIntake": true/false,
-    "workerSourcing": true/false,
-    "screening": true/false,
-    "deployment": true/false,
-    "qualityReview": true/false,
-    "payment": true/false,
-    "compliance": true/false
+    "overall": 0,
+    "topics": [
+      {{
+        "name": "Discovery phase name",
+        "percentage": 0,
+        "captured": true,
+        "status": "well_covered|partial|not_covered",
+        "detail": "Why"
+      }}
+    ]
+  }},
+  "automationReadiness": {{
+    "overallScore": 72,
+    "contextCompleteness": {{
+      "score": 65,
+      "detail": "Coverage summary"
+    }},
+    "processClarity": {{
+      "score": 80,
+      "detail": "Process clarity summary"
+    }},
+    "dataAvailability": {{
+      "score": 60,
+      "detail": "Data availability summary"
+    }},
+    "teamReadiness": {{
+      "score": 75,
+      "detail": "Team readiness summary"
+    }},
+    "topAutomationCandidates": [
+      {{
+        "process": "What to automate",
+        "currentMonthlyCost": "Current cost string or null",
+        "automationType": "Type of AI agent/system",
+        "estimatedSavings": "Savings estimate or null",
+        "prerequisite": "What we need before building",
+        "timeToImplement": "Estimated time",
+        "priority": 1
+      }}
+    ],
+    "blockers": ["What is preventing automation today"],
+    "recommendedNextSteps": ["Specific next actions to move forward"]
   }}
 }}
 
 Rules:
 - For any section where context is insufficient, return null for that section
-- Set contextCoverage booleans based on whether you have REAL information (not just the seed context)
+- Set contextCoverage based on REAL information, not just the seed context
 - Be specific -- use actual names, numbers, and tools mentioned in the context
 - For knowledgeGaps, generate specific questions based on what is MISSING
 - painPoints should only include things actually mentioned or strongly implied
 - Set confidence to 'low' for any step where you are inferring rather than directly told
-- If information was NOT provided for a field, set it to null rather than guessing"""
+- If information was NOT provided for a field, set it to null rather than guessing
+
+BUSINESS MODEL CANVAS:
+Analyze this as a business, not just a process. Map the business model canvas to understand:
+- What exactly do clients pay for? What's the value promise?
+- What do workers/candidates get from this platform?
+- Where does the money come from and where does it go?
+- What are the key activities and which ones consume the most ops bandwidth?
+- What data does this business generate that could be a competitive advantage for AI?
+
+For each key activity, estimate cost intensity and automation readiness. These ratings directly drive automation priority decisions.
+If this is a software business, adapt clients = enterprise buyers, workers = end users, and key activities = product development + sales + implementation.
+
+COST ESTIMATION:
+For every ops activity where you know or can reasonably estimate headcount and time spent, calculate a monthly cost estimate.
+Use these assumptions:
+- India ops team: ~₹25,000/month per person (₹142/hour for 176 hours/month)
+- Malaysia ops team: ~RM3,500/month per person
+- Indonesia ops team: ~Rp5,000,000/month per person
+- Multiply: (people × hours_per_day × 22 working_days) / 176 × monthly_salary
+
+Always show your math in costBasis and set confidence based on evidence.
+
+AUTOMATION READINESS SCORECARD:
+Rate this vertical on 4 dimensions (0-100):
+1. Context Completeness
+2. Process Clarity
+3. Data Availability
+4. Team Readiness
+
+Overall score = weighted average (context 30%, process 30%, data 25%, readiness 15%).
+Then list the top automation candidates ranked by monthly cost × automation feasibility, plus blockers and recommended next steps."""
 
 
 @retry(
@@ -593,6 +897,18 @@ def generate_intelligence(vertical_id, user_id, force=False):
             if fb.comment:
                 full_context += f" Comment: {fb.comment}"
 
+    validated_facts = build_validated_facts(vertical_id)
+    if validated_facts:
+        full_context += "\n\n--- VALIDATED FACTS ---"
+        for fact in validated_facts:
+            full_context += f"\n- {fact}"
+
+    discovery_coverage = compute_discovery_coverage(vertical_id)
+    if discovery_coverage:
+        full_context += "\n\n--- DISCOVERY COVERAGE HEURISTIC ---"
+        for item in discovery_coverage:
+            full_context += f"\n- {item['phase']}: {item['status']} ({item['percentage']}%)"
+
     system_prompt = get_intelligence_prompt(vertical)
 
     response = client.messages.create(
@@ -617,3 +933,188 @@ def generate_intelligence(vertical_id, user_id, force=False):
     db.session.commit()
 
     return intelligence
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=60),
+    retry=retry_if_exception(is_rate_limit_error),
+    reraise=True
+)
+def generate_cross_vertical_analysis():
+    all_intelligence = []
+    verticals = Vertical.query.all()
+
+    for vertical in verticals:
+        intel = VerticalIntelligence.query.filter_by(
+            vertical_id=vertical.id
+        ).order_by(VerticalIntelligence.generated_at.desc()).first()
+        if intel and intel.intelligence_data:
+            all_intelligence.append({
+                "vertical": vertical.name,
+                "vertical_id": vertical.id,
+                "type": vertical.type,
+                "geography": vertical.geography,
+                "intelligence": intel.intelligence_data,
+            })
+
+    if len(all_intelligence) < 2:
+        return None
+
+    prompt = """You are analyzing intelligence data from multiple business units within BetterPlace Group. Your goal is to identify CROSS-VERTICAL PATTERNS that can inform shared automation strategies.
+
+Return ONLY valid JSON:
+{
+  "commonPainPoints": [
+    {
+      "painPoint": "Shared pain point",
+      "affectedVerticals": ["Vertical names"],
+      "combinedMonthlyCost": "Combined cost string or null",
+      "sharedAutomationOpportunity": "One agent or approach that could serve all affected verticals"
+    }
+  ],
+  "sharedProcessPatterns": [
+    {
+      "pattern": "Process pattern name",
+      "description": "How this pattern manifests across verticals",
+      "verticals": ["Vertical names"],
+      "commonSteps": ["Similar steps"],
+      "differences": ["Key differences by geography or business model"],
+      "reusableAgentDesign": "How one agent design could be reused"
+    }
+  ],
+  "automationPriorityMatrix": [
+    {
+      "automationTarget": "What to automate",
+      "verticals": ["Which verticals benefit"],
+      "totalMonthlyCost": "Combined cost",
+      "totalEstimatedSavings": "Combined savings",
+      "buildOnceServeMany": true,
+      "recommendedBeachhead": "Which vertical to start with and why",
+      "priority": 1
+    }
+  ],
+  "uniqueInsightsPerVertical": [
+    {
+      "vertical": "Vertical name",
+      "uniqueAspect": "Unique trait",
+      "implication": "What it means for automation strategy"
+    }
+  ],
+  "overallRecommendation": "2-3 sentence summary of the optimal automation strategy across all verticals"
+}
+
+IMPORTANT:
+- OkayGo and Troopers are the same business model in different geographies; maximize reuse opportunities.
+- MyRobin is similar but with longer-term placements.
+- AasaanJobs shares sourcing/screening patterns with staffing businesses.
+- Background Verification is a cross-cutting function.
+- goBetter is software and should likely be treated separately from services ops.
+
+Highlight the highest-leverage build-once-serve-many opportunities."""
+
+    context = "\n\n".join(
+        f"=== {item['vertical']} ({item['geography']} — {item['type']}) ===\n{item['intelligence']}"
+        for item in all_intelligence
+    )
+
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        system=prompt,
+        messages=[{"role": "user", "content": context}]
+    )
+
+    return response.content[0].text
+
+
+def generate_automation_brief(intelligence_data, export_data):
+    intelligence = safe_json_loads(intelligence_data, default={})
+    if not intelligence:
+        return ""
+
+    vertical = export_data.get("vertical", {})
+    business_canvas = intelligence.get("businessModelCanvas") or {}
+    service_blueprint = intelligence.get("serviceBlueprint") or {}
+    automation = intelligence.get("automationReadiness") or {}
+    gaps = intelligence.get("knowledgeGaps") or []
+    validated_facts = export_data.get("validated_facts") or []
+
+    lines = [
+        f"# {vertical.get('name', 'Unknown Vertical')} — AI Automation Brief",
+        f"Generated from Context Brain on {export_data.get('exported_at', '')}",
+        "",
+        "## Business Model Summary",
+        f"- Client value proposition: {((business_canvas.get('valueProposition') or {}).get('toClients')) or 'Not yet captured'}",
+        f"- Worker/user value proposition: {((business_canvas.get('valueProposition') or {}).get('toWorkers')) or 'Not yet captured'}",
+        f"- Pricing mechanism: {((business_canvas.get('revenueModel') or {}).get('pricingMechanism')) or 'Not yet captured'}",
+        f"- Margin structure: {((business_canvas.get('revenueModel') or {}).get('marginStructure')) or 'Not yet captured'}",
+        "",
+        "## Service Blueprint Summary",
+    ]
+
+    for stage in (service_blueprint.get("stages") or [])[:8]:
+        ops = stage.get("opsTeamWork") or {}
+        cost = (ops.get("costEstimate") or {}).get("estimatedMonthlyCost") or "Cost not estimated"
+        lines.append(
+            f"- {stage.get('stageName', 'Stage')}: {ops.get('action') or 'No ops action captured'} — {cost}"
+        )
+
+    lines.extend([
+        "",
+        "## Top Automation Targets (Ranked)",
+    ])
+
+    for idx, candidate in enumerate((automation.get("topAutomationCandidates") or [])[:5], start=1):
+        lines.append(
+            f"{idx}. {candidate.get('process', 'Unknown target')} — Cost: {candidate.get('currentMonthlyCost') or 'Unknown'} — Savings: {candidate.get('estimatedSavings') or 'Unknown'} — Time: {candidate.get('timeToImplement') or 'Unknown'}"
+        )
+        lines.append(f"   Prerequisites: {candidate.get('prerequisite') or 'None captured'}")
+        lines.append("")
+
+    lines.extend([
+        f"## Automation Readiness Score: {automation.get('overallScore') or 0}/100",
+        f"- Context: {((automation.get('contextCompleteness') or {}).get('score')) or 0}% | Process: {((automation.get('processClarity') or {}).get('score')) or 0}% | Data: {((automation.get('dataAvailability') or {}).get('score')) or 0}% | Team: {((automation.get('teamReadiness') or {}).get('score')) or 0}%",
+        f"- Blockers: {', '.join(automation.get('blockers') or ['None captured'])}",
+        "",
+        "## Knowledge Gaps (Still Need)",
+    ])
+
+    if gaps:
+        for gap in gaps:
+            lines.append(f"- {gap.get('question') if isinstance(gap, dict) else gap}")
+    else:
+        lines.append("- None captured")
+
+    lines.extend([
+        "",
+        "## Full Service Blueprint",
+    ])
+
+    for stage in service_blueprint.get("stages") or []:
+        customer = stage.get("customerJourney") or {}
+        worker = stage.get("workerJourney") or {}
+        ops = stage.get("opsTeamWork") or {}
+        lines.append(f"### {stage.get('stageName', 'Stage')}")
+        lines.append(f"- Customer: {customer.get('action') or 'Not captured'}")
+        lines.append(f"- Worker: {worker.get('action') or 'Not captured'}")
+        lines.append(f"- Ops: {ops.get('action') or 'Not captured'}")
+        lines.append(f"- Cost: {((ops.get('costEstimate') or {}).get('estimatedMonthlyCost')) or 'Not estimated'}")
+        lines.append("")
+
+    lines.extend([
+        "## Raw Context Summary",
+        f"- {len(export_data.get('conversation') or [])} chat messages captured",
+        f"- {len(export_data.get('documents') or [])} documents processed",
+        f"- {len(export_data.get('notes') or [])} notes added",
+        f"- Key validated facts: {', '.join(validated_facts) if validated_facts else 'None captured'}",
+        "",
+        "## Recommended Agent Design Starting Points",
+    ])
+
+    for candidate in automation.get("topAutomationCandidates") or []:
+        lines.append(
+            f"- {candidate.get('process', 'Unknown target')}: {candidate.get('automationType') or 'No agent type captured'}"
+        )
+
+    return "\n".join(lines).strip() + "\n"
