@@ -8,12 +8,31 @@ import base64
 from datetime import datetime
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, send_file, send_from_directory, current_app
 from flask_login import login_required, current_user
-from models import db, User, Vertical, Message, Document, Note, ProcessMap, ProcessMapFeedback, VerticalIntelligence, IntelligenceFeedback
+from models import db, User, Vertical, Message, Document, Note, ProcessMap, ProcessMapFeedback, VerticalIntelligence, IntelligenceFeedback, UserVerticalRole
 from functools import wraps
 
 main_routes = Blueprint("main", __name__)
 api_routes = Blueprint("api", __name__)
 admin_routes = Blueprint("admin", __name__)
+
+ROLE_HIERARCHY = {'admin': 3, 'leader': 2, 'contributor': 1}
+
+
+def get_user_role(user, vertical_id):
+    from app import is_admin
+    if is_admin(user.email):
+        return 'admin'
+    role_record = UserVerticalRole.query.filter_by(
+        user_id=user.id, vertical_id=vertical_id
+    ).first()
+    return role_record.role if role_record else None
+
+
+def check_role(vertical_id, min_role='contributor'):
+    role = get_user_role(current_user, vertical_id)
+    if not role or ROLE_HIERARCHY.get(role, 0) < ROLE_HIERARCHY[min_role]:
+        return role, (jsonify({"error": "Insufficient permissions"}), 403)
+    return role, None
 
 
 def admin_required(f):
@@ -49,7 +68,8 @@ def vertical_workspace(vertical_id):
     vertical = Vertical.query.get(vertical_id)
     if not vertical:
         return redirect(url_for("main.index"))
-    return render_template("vertical.html", vertical=vertical)
+    user_role = get_user_role(current_user, vertical_id)
+    return render_template("vertical.html", vertical=vertical, user_role=user_role or 'viewer')
 
 
 @main_routes.route("/admin")
@@ -121,7 +141,8 @@ def get_verticals():
             },
             "map_status": map_status,
             "contributors": [{"id": c.id, "name": c.display_name, "pic": c.profile_pic} for c in contributors],
-            "last_activity": last_activity.isoformat() if last_activity else None
+            "last_activity": last_activity.isoformat() if last_activity else None,
+            "user_role": get_user_role(current_user, v.id),
         })
     return jsonify(result)
 
@@ -135,6 +156,10 @@ def send_chat():
 
     if not vertical_id or not message_text:
         return jsonify({"error": "Missing verticalId or message"}), 400
+
+    role, err = check_role(vertical_id, 'contributor')
+    if err:
+        return err
 
     vertical = Vertical.query.get(vertical_id)
     if not vertical:
@@ -152,7 +177,9 @@ def send_chat():
     current_user.last_active_at = datetime.utcnow()
     db.session.commit()
 
-    messages_history = Message.query.filter_by(vertical_id=vertical_id).order_by(Message.created_at).all()
+    messages_history = Message.query.filter_by(
+        vertical_id=vertical_id, user_id=current_user.id
+    ).order_by(Message.created_at).all()
 
     try:
         from ai_service import send_chat_message
@@ -192,7 +219,9 @@ def send_chat():
 @api_routes.route("/chat/<vertical_id>")
 @login_required
 def get_chat_history(vertical_id):
-    messages = Message.query.filter_by(vertical_id=vertical_id).order_by(Message.created_at).all()
+    messages = Message.query.filter_by(
+        vertical_id=vertical_id, user_id=current_user.id
+    ).order_by(Message.created_at).all()
     result = []
     for msg in messages:
         user = User.query.get(msg.user_id) if msg.user_id else None
@@ -207,6 +236,97 @@ def get_chat_history(vertical_id):
     return jsonify(result)
 
 
+@api_routes.route("/chat/<vertical_id>/team")
+@login_required
+def get_team_chat_list(vertical_id):
+    role, err = check_role(vertical_id, 'leader')
+    if err:
+        return err
+    users_with_msgs = db.session.query(
+        User.id, User.display_name, User.profile_pic,
+        db.func.count(Message.id).label('msg_count'),
+        db.func.max(Message.created_at).label('last_msg')
+    ).join(Message, User.id == Message.user_id).filter(
+        Message.vertical_id == vertical_id,
+        Message.role == 'user'
+    ).group_by(User.id, User.display_name, User.profile_pic).all()
+
+    return jsonify([{
+        "id": u.id,
+        "name": u.display_name,
+        "pic": u.profile_pic,
+        "message_count": u.msg_count,
+        "last_active": u.last_msg.isoformat() if u.last_msg else None
+    } for u in users_with_msgs])
+
+
+@api_routes.route("/chat/<vertical_id>/user/<target_user_id>")
+@login_required
+def get_user_chat_thread(vertical_id, target_user_id):
+    role, err = check_role(vertical_id, 'leader')
+    if err:
+        return err
+    messages = Message.query.filter_by(
+        vertical_id=vertical_id, user_id=target_user_id
+    ).order_by(Message.created_at).all()
+    target_user = User.query.get(target_user_id)
+    return jsonify({
+        "user": {
+            "id": target_user.id,
+            "name": target_user.display_name,
+            "pic": target_user.profile_pic
+        } if target_user else None,
+        "messages": [{
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "created_at": m.created_at.isoformat()
+        } for m in messages]
+    })
+
+
+@api_routes.route("/chat/<vertical_id>/intel-summary")
+@login_required
+def get_chat_intel_summary(vertical_id):
+    cached = VerticalIntelligence.query.filter_by(
+        vertical_id=vertical_id
+    ).order_by(VerticalIntelligence.generated_at.desc()).first()
+    if not cached or not cached.intelligence_data:
+        return jsonify({"has_intel": False})
+
+    try:
+        intel = json.loads(cached.intelligence_data)
+    except (json.JSONDecodeError, TypeError):
+        return jsonify({"has_intel": False})
+
+    profile = intel.get("businessProfile") or {}
+    pain_points = intel.get("painPoints") or []
+    coverage = intel.get("contextCoverage") or {}
+    gaps = intel.get("knowledgeGaps") or []
+
+    facts = []
+    if profile.get("teamSize"):
+        facts.append(f"{profile['teamSize']} team")
+    if profile.get("businessModel"):
+        model_text = profile["businessModel"]
+        facts.append(model_text[:60] + "..." if len(model_text) > 60 else model_text)
+    if pain_points:
+        facts.append(f"{len(pain_points)} pain points identified")
+    overall_pct = coverage.get("overall", 0)
+    if overall_pct:
+        facts.append(f"{overall_pct}% context coverage")
+
+    gap_texts = []
+    for g in gaps[:5]:
+        gap_texts.append(g if isinstance(g, str) else (g.get("question") or str(g)))
+
+    return jsonify({
+        "has_intel": True,
+        "facts": facts,
+        "knowledge_gaps": gap_texts,
+    })
+
+
 @api_routes.route("/documents/upload", methods=["POST"])
 @login_required
 def upload_document():
@@ -215,6 +335,11 @@ def upload_document():
 
     file = request.files["file"]
     vertical_id = request.form.get("verticalId")
+
+    if vertical_id:
+        role, err = check_role(vertical_id, 'contributor')
+        if err:
+            return err
     doc_type = request.form.get("docType", "other")
     description = request.form.get("description", "")
 
@@ -370,6 +495,10 @@ def create_note():
     if not vertical_id or not content:
         return jsonify({"error": "Missing verticalId or content"}), 400
 
+    role, err = check_role(vertical_id, 'contributor')
+    if err:
+        return err
+
     note = Note(
         vertical_id=vertical_id,
         user_id=current_user.id,
@@ -508,6 +637,35 @@ def submit_feedback(map_id):
     })
 
 
+def _filter_intel_for_contributor(intel_data):
+    if not isinstance(intel_data, dict):
+        return intel_data
+    filtered = dict(intel_data)
+    filtered.pop("teamStructure", None)
+    filtered.pop("automationReadiness", None)
+    bp = filtered.get("serviceBlueprint")
+    if isinstance(bp, dict):
+        bp = dict(bp)
+        for stage in (bp.get("stages") or []):
+            ops = stage.get("opsTeamWork")
+            if isinstance(ops, dict):
+                ops.pop("costEstimate", None)
+                ops.pop("teamSize", None)
+                ops.pop("hoursPerDay", None)
+        filtered["serviceBlueprint"] = bp
+    canvas = filtered.get("businessModelCanvas")
+    if isinstance(canvas, dict):
+        canvas = dict(canvas)
+        rm = canvas.get("revenueModel")
+        if isinstance(rm, dict):
+            rm.pop("marginStructure", None)
+        cs = canvas.get("costStructure")
+        if isinstance(cs, dict):
+            canvas["costStructure"] = {}
+        filtered["businessModelCanvas"] = canvas
+    return filtered
+
+
 @api_routes.route("/intelligence/<vertical_id>")
 @login_required
 def get_intelligence(vertical_id):
@@ -515,6 +673,8 @@ def get_intelligence(vertical_id):
     vertical = Vertical.query.get(vertical_id)
     if not vertical:
         return jsonify({"error": "Vertical not found"}), 404
+
+    user_role = get_user_role(current_user, vertical_id)
 
     cached = VerticalIntelligence.query.filter_by(
         vertical_id=vertical_id
@@ -533,13 +693,17 @@ def get_intelligence(vertical_id):
         "stale": stale,
         "intelligence": None,
         "generated_at": None,
+        "user_role": user_role or "viewer",
     }
 
     if cached:
         try:
-            result["intelligence"] = json.loads(cached.intelligence_data)
+            intel = json.loads(cached.intelligence_data)
         except (json.JSONDecodeError, TypeError):
-            result["intelligence"] = cached.intelligence_data
+            intel = cached.intelligence_data
+        if user_role in (None, 'contributor') and isinstance(intel, dict):
+            intel = _filter_intel_for_contributor(intel)
+        result["intelligence"] = intel
         result["generated_at"] = cached.generated_at.isoformat()
 
     return jsonify(result)
@@ -548,6 +712,9 @@ def get_intelligence(vertical_id):
 @api_routes.route("/intelligence/<vertical_id>/refresh", methods=["POST"])
 @login_required
 def refresh_intelligence(vertical_id):
+    role, err = check_role(vertical_id, 'leader')
+    if err:
+        return err
     from ai_service import generate_intelligence
     vertical = Vertical.query.get(vertical_id)
     if not vertical:
@@ -575,6 +742,9 @@ def refresh_intelligence(vertical_id):
 @api_routes.route("/intelligence/<vertical_id>/feedback", methods=["POST"])
 @login_required
 def submit_intelligence_feedback(vertical_id):
+    role, err = check_role(vertical_id, 'contributor')
+    if err:
+        return err
     data = request.json
     fb = IntelligenceFeedback(
         vertical_id=vertical_id,
@@ -675,15 +845,24 @@ def admin_overview():
 def admin_get_users():
     users = User.query.order_by(User.created_at.desc()).all()
     from app import is_admin
+    verticals = {v.id: v.name for v in Vertical.query.all()}
     result = []
     for u in users:
+        roles = UserVerticalRole.query.filter_by(user_id=u.id).all()
         result.append({
+            "id": u.id,
             "email": u.email,
             "display_name": u.display_name,
             "pin": u.pin,
             "is_admin": is_admin(u.email),
             "last_active_at": u.last_active_at.isoformat() if u.last_active_at else None,
-            "created_at": u.created_at.isoformat() if u.created_at else None
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "vertical_roles": [{
+                "id": r.id,
+                "vertical_id": r.vertical_id,
+                "vertical_name": verticals.get(r.vertical_id, r.vertical_id),
+                "role": r.role
+            } for r in roles]
         })
     return jsonify(result)
 
@@ -730,6 +909,56 @@ def admin_delete_user(email):
     if not user:
         return jsonify({"error": "User not found"}), 404
     db.session.delete(user)
+    db.session.commit()
+    return jsonify({"deleted": True})
+
+
+@admin_routes.route("/api/user-roles")
+@admin_required
+def admin_get_user_roles():
+    roles = UserVerticalRole.query.all()
+    verticals = {v.id: v.name for v in Vertical.query.all()}
+    return jsonify([{
+        "id": r.id,
+        "user_id": r.user_id,
+        "vertical_id": r.vertical_id,
+        "vertical_name": verticals.get(r.vertical_id, r.vertical_id),
+        "role": r.role,
+        "assigned_at": r.assigned_at.isoformat() if r.assigned_at else None
+    } for r in roles])
+
+
+@admin_routes.route("/api/user-roles", methods=["POST"])
+@admin_required
+def admin_set_user_role():
+    data = request.json
+    user_id = data.get("user_id")
+    vertical_id = data.get("vertical_id")
+    role = data.get("role")
+    if not user_id or not vertical_id or role not in ('leader', 'contributor'):
+        return jsonify({"error": "user_id, vertical_id, and role (leader/contributor) required"}), 400
+    existing = UserVerticalRole.query.filter_by(user_id=user_id, vertical_id=vertical_id).first()
+    if existing:
+        existing.role = role
+        existing.assigned_by = current_user.id
+        existing.assigned_at = datetime.utcnow()
+    else:
+        existing = UserVerticalRole(
+            user_id=user_id, vertical_id=vertical_id, role=role,
+            assigned_by=current_user.id
+        )
+        db.session.add(existing)
+    db.session.commit()
+    return jsonify({"id": existing.id, "status": "saved"})
+
+
+@admin_routes.route("/api/user-roles/<int:role_id>", methods=["DELETE"])
+@admin_required
+def admin_delete_user_role(role_id):
+    role_rec = UserVerticalRole.query.get(role_id)
+    if not role_rec:
+        return jsonify({"error": "Role assignment not found"}), 404
+    db.session.delete(role_rec)
     db.session.commit()
     return jsonify({"deleted": True})
 

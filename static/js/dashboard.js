@@ -62,12 +62,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             const contributorCount = (v.contributors || []).length;
 
+            const roleBadge = v.user_role === 'admin' ? '<span class="role-badge role-admin">Admin</span>'
+                : v.user_role === 'leader' ? '<span class="role-badge role-leader">Leader</span>'
+                : v.user_role === 'contributor' ? '<span class="role-badge role-contributor">Contributor</span>'
+                : '<span class="role-badge role-viewer">View Only</span>';
+
             return `
                 <a href="/vertical/${v.id}" class="vertical-card" style="border-top-color: ${v.color}">
                     <div class="card-header">
                         <div class="card-icon" style="background:${v.color}18;color:${v.color}">${v.icon}</div>
                         <div>
-                            <div class="card-title">${v.name}</div>
+                            <div class="card-title">${v.name} ${roleBadge}</div>
                             <div class="card-meta">${v.geography} &middot; ${v.type}</div>
                         </div>
                         <div class="vertical-card-arrow">→</div>

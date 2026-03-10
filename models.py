@@ -116,6 +116,24 @@ class VerticalIntelligence(db.Model):
     vertical = db.relationship('Vertical', backref='intelligence')
 
 
+class UserVerticalRole(db.Model):
+    __tablename__ = 'user_vertical_roles'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Text, db.ForeignKey('users.id'), nullable=False)
+    vertical_id = db.Column(db.Text, db.ForeignKey('verticals.id'), nullable=False)
+    role = db.Column(db.Text, nullable=False)
+    assigned_at = db.Column(db.DateTime, default=datetime.utcnow)
+    assigned_by = db.Column(db.Text, db.ForeignKey('users.id'))
+
+    user = db.relationship('User', foreign_keys=[user_id], backref='vertical_roles')
+    vertical = db.relationship('Vertical', backref='user_roles')
+    assigner = db.relationship('User', foreign_keys=[assigned_by])
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'vertical_id', name='uq_user_vertical'),
+    )
+
+
 class IntelligenceFeedback(db.Model):
     __tablename__ = 'intelligence_feedback'
     id = db.Column(db.Integer, primary_key=True)

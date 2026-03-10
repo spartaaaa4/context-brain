@@ -227,11 +227,21 @@ async function loadAdminProcessMap(verticalId) {
     }
 }
 
+let allVerticals = [];
+
 async function loadUsers() {
     try {
-        const res = await fetch('/admin/api/users');
-        const users = await res.json();
+        const [usersRes, verticalsRes] = await Promise.all([
+            fetch('/admin/api/users'),
+            fetch('/api/verticals')
+        ]);
+        const users = await usersRes.json();
+        allVerticals = await verticalsRes.json();
         const section = document.getElementById('admin-users-section');
+
+        const thStyle = 'padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px';
+        const tdStyle = 'padding:12px 16px;font-size:14px';
+
         section.innerHTML = `
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;margin-top:24px">
                 <h2 style="font-size:20px;font-weight:600">User Management</h2>
@@ -241,28 +251,33 @@ async function loadUsers() {
                 <table style="width:100%;border-collapse:collapse;background:var(--bg-secondary);border-radius:12px;overflow:hidden">
                     <thead>
                         <tr style="border-bottom:1px solid var(--border-color)">
-                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Email</th>
-                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Name</th>
-                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">PIN</th>
-                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Last Active</th>
-                            <th style="padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Admin</th>
-                            <th style="padding:12px 16px;text-align:right;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Actions</th>
+                            <th style="${thStyle}">Email</th>
+                            <th style="${thStyle}">Name</th>
+                            <th style="${thStyle}">PIN</th>
+                            <th style="${thStyle}">Vertical Roles</th>
+                            <th style="${thStyle}">Admin</th>
+                            <th style="${thStyle};text-align:right">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${users.map(u => `
+                        ${users.map(u => {
+                            const rolesBadges = (u.vertical_roles || []).map(r =>
+                                `<span class="role-badge role-${r.role}" style="margin-right:4px">${esc(r.vertical_name)}: ${r.role}</span>`
+                            ).join('') || '<span style="color:var(--text-muted);font-size:12px">No assignments</span>';
+                            return `
                             <tr style="border-bottom:1px solid var(--border-color)">
-                                <td style="padding:12px 16px;font-size:14px;color:var(--text-primary)">${esc(u.email)}</td>
-                                <td style="padding:12px 16px;font-size:14px;color:var(--text-secondary)">${esc(u.display_name || '')}</td>
-                                <td style="padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:14px;color:var(--text-primary)">${esc(u.pin || '—')}</td>
-                                <td style="padding:12px 16px;font-size:13px;color:var(--text-muted)">${u.last_active_at ? new Date(u.last_active_at).toLocaleDateString() : 'Never'}</td>
-                                <td style="padding:12px 16px;font-size:13px">${u.is_admin ? '<span style="color:#10B981">Yes</span>' : '<span style="color:var(--text-muted)">No</span>'}</td>
-                                <td style="padding:12px 16px;text-align:right">
-                                    <button onclick="regenPin('${esc(u.email)}')" style="padding:4px 10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;margin-right:6px">Regenerate PIN</button>
+                                <td style="${tdStyle};color:var(--text-primary)">${esc(u.email)}</td>
+                                <td style="${tdStyle};color:var(--text-secondary)">${esc(u.display_name || '')}</td>
+                                <td style="${tdStyle};font-family:'JetBrains Mono',monospace;color:var(--text-primary)">${esc(u.pin || '—')}</td>
+                                <td style="${tdStyle}">${rolesBadges}</td>
+                                <td style="${tdStyle};font-size:13px">${u.is_admin ? '<span style="color:#10B981">Yes</span>' : '<span style="color:var(--text-muted)">No</span>'}</td>
+                                <td style="${tdStyle};text-align:right;white-space:nowrap">
+                                    <button onclick="showAssignRole('${esc(u.id)}', '${esc(u.display_name || u.email)}')" style="padding:4px 10px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:6px;color:#818CF8;cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;margin-right:4px">Assign Role</button>
+                                    <button onclick="regenPin('${esc(u.email)}')" style="padding:4px 10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;margin-right:4px">Regen PIN</button>
                                     <button onclick="removeUser('${esc(u.email)}')" style="padding:4px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;color:#EF4444;cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif">Remove</button>
                                 </td>
-                            </tr>
-                        `).join('')}
+                            </tr>`;
+                        }).join('')}
                     </tbody>
                 </table>
             </div>
@@ -271,6 +286,52 @@ async function loadUsers() {
         console.error('Failed to load users:', e);
     }
 }
+
+window.showAssignRole = function(userId, userName) {
+    const verticalOptions = allVerticals.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+    const html = `
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000" id="assign-role-modal">
+            <div style="background:var(--bg-secondary);border-radius:12px;padding:24px;max-width:400px;width:90%">
+                <h3 style="margin:0 0 16px 0;font-size:16px">Assign Role: ${esc(userName)}</h3>
+                <div style="margin-bottom:12px">
+                    <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:4px">Vertical</label>
+                    <select id="assign-vertical" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);font-family:'DM Sans',sans-serif">${verticalOptions}</select>
+                </div>
+                <div style="margin-bottom:16px">
+                    <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:4px">Role</label>
+                    <select id="assign-role" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);font-family:'DM Sans',sans-serif">
+                        <option value="contributor">Contributor</option>
+                        <option value="leader">Leader</option>
+                    </select>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:flex-end">
+                    <button onclick="document.getElementById('assign-role-modal').remove()" style="padding:8px 16px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:8px;color:var(--text-secondary);cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px">Cancel</button>
+                    <button onclick="submitAssignRole('${esc(userId)}')" style="padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500">Assign</button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+};
+
+window.submitAssignRole = async function(userId) {
+    const verticalId = document.getElementById('assign-vertical').value;
+    const role = document.getElementById('assign-role').value;
+    try {
+        const res = await fetch('/admin/api/user-roles', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({user_id: userId, vertical_id: verticalId, role})
+        });
+        const data = await res.json();
+        if (!res.ok) { alert(data.error || 'Failed to assign role'); return; }
+        const modal = document.getElementById('assign-role-modal');
+        if (modal) modal.remove();
+        loadUsers();
+    } catch (e) {
+        alert('Failed to assign role');
+    }
+};
 
 window.addUser = async function() {
     const email = prompt('Enter email address for the new user:');

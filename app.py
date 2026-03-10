@@ -3,7 +3,7 @@ import random
 import logging
 from flask import Flask, jsonify
 from flask_login import LoginManager
-from models import db, User, Vertical
+from models import db, User, Vertical, UserVerticalRole
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -2807,3 +2807,231 @@ body {
     .stat-item { min-width: 0; }
     .login-card { padding: 24px 20px; }
 }
+
+/* ---- Role badges ---- */
+.role-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+.role-admin { background: rgba(16,185,129,0.15); color: #10b981; }
+.role-leader { background: rgba(99,102,241,0.15); color: #818cf8; }
+.role-contributor { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.role-viewer { background: rgba(148,163,184,0.12); color: #94a3b8; }
+
+/* ---- Intelligence sub-tabs ---- */
+.intel-subtabs {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.intel-subtab {
+    padding: 6px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: 'DM Sans', sans-serif;
+    white-space: nowrap;
+    position: relative;
+    transition: all 0.15s;
+}
+
+.intel-subtab:hover { background: var(--bg-primary); }
+.intel-subtab.active {
+    background: var(--accent, #6366f1);
+    color: #fff;
+    border-color: transparent;
+}
+
+.intel-subtab.has-data::after {
+    content: '';
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #10b981;
+}
+.intel-subtab.active.has-data::after { background: #fff; }
+
+.intel-subtab-content { display: none; }
+.intel-subtab-content.active { display: block; }
+
+/* ---- Chat topic prompts ---- */
+.chat-topic-prompts {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.topic-prompts-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.topic-prompts-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.topic-prompts-toggle {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px;
+}
+
+.topic-prompts-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.topic-prompt-card {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    font-family: 'DM Sans', sans-serif;
+    transition: all 0.15s;
+}
+
+.topic-prompt-card:hover {
+    background: var(--bg-primary);
+    border-color: var(--accent, #6366f1);
+    color: var(--text-primary);
+}
+
+.topic-prompt-icon { font-size: 14px; }
+.topic-prompt-label { font-weight: 500; }
+
+/* ---- Chat intel banner ---- */
+.chat-intel-banner {
+    padding: 10px 16px;
+    background: rgba(99, 102, 241, 0.08);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.intel-banner-row { margin-bottom: 2px; }
+.intel-banner-row strong { color: var(--text-primary); margin-right: 6px; }
+.intel-banner-fact { color: var(--text-primary); }
+.intel-banner-sep { color: var(--text-muted); margin: 0 6px; }
+.intel-banner-gap {
+    color: var(--accent, #818cf8);
+    text-decoration: none;
+    cursor: pointer;
+}
+.intel-banner-gap:hover { text-decoration: underline; }
+
+/* ---- Team Chats tab ---- */
+.team-chats-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 0;
+    min-height: 500px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.team-chats-sidebar {
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-color);
+    overflow-y: auto;
+    max-height: 600px;
+}
+
+.team-chats-viewer {
+    background: var(--bg-primary);
+    overflow-y: auto;
+    max-height: 600px;
+    padding: 16px;
+}
+
+.team-chats-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.tc-user-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.15s;
+}
+.tc-user-card:hover { background: var(--bg-card); }
+
+.tc-user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: var(--bg-card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+.tc-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.tc-user-info { min-width: 0; }
+.tc-user-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.tc-user-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+.tc-thread-header {
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 14px;
+}
+
+.tc-thread-messages { display: flex; flex-direction: column; gap: 12px; }
+
+@media (max-width: 768px) {
+    .team-chats-layout { grid-template-columns: 1fr; }
+    .team-chats-sidebar { max-height: 200px; border-right: none; border-bottom: 1px solid var(--border-color); }
+    .topic-prompts-grid { gap: 6px; }
+    .topic-prompt-card { font-size: 11px; padding: 5px 10px; }
+    .intel-subtabs { gap: 2px; }
+    .intel-subtab { font-size: 11px; padding: 5px 10px; }
+}

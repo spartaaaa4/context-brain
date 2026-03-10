@@ -1,16 +1,26 @@
 const VERTICAL_ID = window.VERTICAL_ID;
 const VERTICAL_COLOR = window.VERTICAL_COLOR;
+const USER_ROLE = window.USER_ROLE || 'viewer';
 let currentMapId = null;
 let pendingFile = null;
 let intelligenceData = null;
 
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
-    initChat();
-    initVoice();
-    initDocuments();
-    initNotes();
-    loadChatHistory();
+    initIntelSubtabs();
+    if (USER_ROLE !== 'viewer') {
+        initChat();
+        initVoice();
+        initTopicPrompts();
+        loadChatHistory();
+        loadChatIntelBanner();
+    }
+    if (document.getElementById('dropzone')) {
+        initDocuments();
+    }
+    if (document.getElementById('add-note-btn')) {
+        initNotes();
+    }
     loadDocuments();
     loadNotes();
 });
@@ -21,12 +31,223 @@ function initTabs() {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(tc => tc.classList.add('hidden'));
             tab.classList.add('active');
-            document.getElementById(`tab-${tab.dataset.tab}`).classList.remove('hidden');
+            const tabEl = document.getElementById(`tab-${tab.dataset.tab}`);
+            if (tabEl) tabEl.classList.remove('hidden');
             if (tab.dataset.tab === 'process') {
-                loadIntelligence(); // Cached intelligence when tab loads
+                loadIntelligence();
+            }
+            if (tab.dataset.tab === 'team-costs') {
+                loadTeamCosts();
+            }
+            if (tab.dataset.tab === 'team-chats') {
+                loadTeamChatList();
             }
         });
     });
+}
+
+function initIntelSubtabs() {
+    document.querySelectorAll('.intel-subtab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.intel-subtab').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.intel-subtab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            const panel = document.getElementById(`intel-sub-${btn.dataset.subtab}`);
+            if (panel) panel.classList.add('active');
+        });
+    });
+}
+
+// ---- Topic Prompt Boxes ----
+const TOPIC_PROMPTS = [
+    { label: 'Worker / User Process', icon: '🔄', prompt: 'Walk me through the end-to-end process when a new worker/candidate enters your system' },
+    { label: 'Client Process', icon: '🤝', prompt: 'How does a new client request come in, and what happens from intake to fulfillment?' },
+    { label: 'Team Structure', icon: '👥', prompt: 'Tell me about your ops team — roles, headcount, who reports to whom' },
+    { label: 'ICP & Target Market', icon: '🎯', prompt: 'Who is your ideal client? What industries, company sizes, and geographies do you target?' },
+    { label: 'Business Model', icon: '💰', prompt: 'How does your pricing work? Per worker, per task, per month? What are your margins?' },
+    { label: 'Industries Served', icon: '🏭', prompt: 'Which industries do you serve most? Are there differences in how you operate across them?' },
+    { label: 'Tools & Systems', icon: '🛠️', prompt: 'What apps, platforms, spreadsheets, and communication tools does your team use daily?' },
+    { label: 'Pain Points', icon: '🔥', prompt: 'What are the top 3 things that frustrate your ops team or waste the most time?' },
+    { label: 'Compliance', icon: '📜', prompt: 'What regulatory or compliance requirements affect your operations?' },
+    { label: 'Payment & Payroll', icon: '💸', prompt: 'How and when do workers get paid? Walk me through the payroll cycle' },
+];
+
+function initTopicPrompts() {
+    const grid = document.getElementById('topic-prompts-grid');
+    const toggle = document.getElementById('topic-prompts-toggle');
+    if (!grid || !toggle) return;
+
+    grid.innerHTML = TOPIC_PROMPTS.map(t => `
+        <button class="topic-prompt-card" data-prompt="${escapeHtml(t.prompt)}">
+            <span class="topic-prompt-icon">${t.icon}</span>
+            <span class="topic-prompt-label">${t.label}</span>
+        </button>
+    `).join('');
+
+    grid.querySelectorAll('.topic-prompt-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const input = document.getElementById('chat-input');
+            input.value = card.dataset.prompt;
+            input.focus();
+        });
+    });
+
+    const storageKey = `cb_topics_collapsed_${VERTICAL_ID}`;
+    const collapsed = localStorage.getItem(storageKey) === '1';
+    if (collapsed) {
+        grid.style.display = 'none';
+        toggle.textContent = '▶';
+    }
+    toggle.addEventListener('click', () => {
+        const isHidden = grid.style.display === 'none';
+        grid.style.display = isHidden ? '' : 'none';
+        toggle.textContent = isHidden ? '▼' : '▶';
+        localStorage.setItem(storageKey, isHidden ? '0' : '1');
+    });
+}
+
+// ---- Chat Intelligence Banner ----
+async function loadChatIntelBanner() {
+    const banner = document.getElementById('chat-intel-banner');
+    if (!banner) return;
+    try {
+        const res = await fetch(`/api/chat/${VERTICAL_ID}/intel-summary`);
+        const data = await res.json();
+        if (!data.has_intel || !data.facts || !data.facts.length) {
+            banner.style.display = 'none';
+            return;
+        }
+        const factsHtml = data.facts.map(f => `<span class="intel-banner-fact">${escapeHtml(f)}</span>`).join('<span class="intel-banner-sep">|</span>');
+        const gapsHtml = (data.knowledge_gaps || []).slice(0, 3).map(g =>
+            `<a href="#" class="intel-banner-gap" onclick="discussInChat('${escapeHtml(g).replace(/'/g, "\\'")}'); return false;">${escapeHtml(g.length > 50 ? g.substring(0, 50) + '...' : g)}</a>`
+        ).join(', ');
+        banner.innerHTML = `
+            <div class="intel-banner-row"><strong>Intelligence:</strong> ${factsHtml}</div>
+            ${gapsHtml ? `<div class="intel-banner-row"><strong>Gaps:</strong> ${gapsHtml}</div>` : ''}
+        `;
+        banner.style.display = 'block';
+    } catch (e) {
+        banner.style.display = 'none';
+    }
+}
+
+// ---- Team Chats Tab (Leader/Admin) ----
+async function loadTeamChatList() {
+    const sidebar = document.getElementById('team-chats-sidebar');
+    if (!sidebar) return;
+    sidebar.innerHTML = '<div class="loading-state">Loading...</div>';
+    try {
+        const res = await fetch(`/api/chat/${VERTICAL_ID}/team`);
+        if (!res.ok) { sidebar.innerHTML = '<div class="loading-state">Could not load team chats</div>'; return; }
+        const users = await res.json();
+        if (!users.length) { sidebar.innerHTML = '<div class="loading-state">No team member chats yet</div>'; return; }
+        sidebar.innerHTML = users.map(u => `
+            <div class="tc-user-card" onclick="loadTeamChatThread('${escapeHtml(u.id)}', '${escapeHtml(u.name || 'User')}')">
+                <div class="tc-user-avatar">${u.pic ? `<img src="${u.pic}">` : `<span>${(u.name || '?')[0]}</span>`}</div>
+                <div class="tc-user-info">
+                    <div class="tc-user-name">${escapeHtml(u.name || 'Unknown')}</div>
+                    <div class="tc-user-meta">${u.message_count} messages · ${u.last_active ? new Date(u.last_active).toLocaleDateString() : 'No activity'}</div>
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        sidebar.innerHTML = '<div class="loading-state">Error loading team chats</div>';
+    }
+}
+
+window.loadTeamChatThread = async function(userId, userName) {
+    const viewer = document.getElementById('team-chats-viewer');
+    if (!viewer) return;
+    viewer.innerHTML = '<div class="loading-state">Loading chat...</div>';
+    try {
+        const res = await fetch(`/api/chat/${VERTICAL_ID}/user/${userId}`);
+        if (!res.ok) { viewer.innerHTML = '<div class="loading-state">Could not load chat</div>'; return; }
+        const data = await res.json();
+        const msgs = data.messages || [];
+        if (!msgs.length) { viewer.innerHTML = `<div class="team-chats-placeholder">No messages from ${escapeHtml(userName)}</div>`; return; }
+        const name = data.user ? data.user.name : userName;
+        viewer.innerHTML = `
+            <div class="tc-thread-header"><strong>${escapeHtml(name)}'s Chat</strong> <span style="color:var(--text-muted);font-size:12px">${msgs.length} messages (read-only)</span></div>
+            <div class="tc-thread-messages">${msgs.map(m => `
+                <div class="message ${m.role}">
+                    <div class="msg-avatar-ai">${m.role === 'user' ? (name[0] || '?') : '🧠'}</div>
+                    <div class="msg-content">
+                        <div class="msg-header">
+                            <span class="msg-name">${m.role === 'user' ? escapeHtml(name) : 'AI Analyst'}</span>
+                            <span class="msg-time">${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>
+                        </div>
+                        <div class="msg-bubble">${escapeHtml(m.content)}</div>
+                    </div>
+                </div>
+            `).join('')}</div>
+        `;
+    } catch (e) {
+        viewer.innerHTML = '<div class="loading-state">Error loading chat thread</div>';
+    }
+};
+
+// ---- Team & Costs Tab (Leader/Admin) ----
+function loadTeamCosts() {
+    const loading = document.getElementById('tc-loading');
+    const content = document.getElementById('tc-content');
+    const empty = document.getElementById('tc-empty');
+    if (!loading || !content || !empty) return;
+
+    if (intelligenceData) {
+        renderTeamCostsContent(intelligenceData);
+    } else {
+        loading.style.display = 'block';
+        content.style.display = 'none';
+        empty.style.display = 'none';
+        fetch(`/api/intelligence/${VERTICAL_ID}`).then(r => r.json()).then(data => {
+            loading.style.display = 'none';
+            if (data.intelligence) {
+                intelligenceData = data.intelligence;
+                renderTeamCostsContent(data.intelligence);
+            } else {
+                empty.style.display = 'block';
+            }
+        }).catch(() => {
+            loading.style.display = 'none';
+            empty.style.display = 'block';
+        });
+    }
+}
+
+function renderTeamCostsContent(data) {
+    const content = document.getElementById('tc-content');
+    const empty = document.getElementById('tc-empty');
+    if (!content) return;
+
+    const hasData = data.teamStructure || data.automationReadiness || data.serviceBlueprint;
+    if (!hasData) {
+        if (empty) empty.style.display = 'block';
+        content.style.display = 'none';
+        return;
+    }
+    if (empty) empty.style.display = 'none';
+    content.style.display = 'block';
+
+    renderTeamStructure(data.teamStructure || [], 'tc-team-structure');
+
+    const costContainer = document.getElementById('tc-cost-summary');
+    if (costContainer) {
+        const summary = buildServiceBlueprintCostSummary(data.serviceBlueprint || {});
+        if (summary) {
+            costContainer.innerHTML = `
+                <div class="intel-card-header"><h3>💰 Ops Cost Summary</h3></div>
+                <div class="intel-cost-summary">
+                    <div class="intel-cost-summary-main">Estimated Total Monthly Ops Cost: <strong>${summary.totalLabel}</strong></div>
+                    <div class="intel-cost-summary-sub">Highest cost stages: ${summary.topStages.map(s => `${escapeHtml(s.stageName)} (${formatCurrencyAmount(s.numeric, summary.symbol)})`).join(' | ')}</div>
+                    <div class="intel-cost-summary-sub">Potential automation savings: ${summary.savingsLabel}</div>
+                </div>
+            `;
+        } else {
+            costContainer.innerHTML = `<div class="intel-card-header"><h3>💰 Ops Cost Summary</h3></div><p class="intel-muted">No cost data available yet.</p>`;
+        }
+    }
+
+    renderAutomationReadiness(data.automationReadiness || {}, 'tc-automation-readiness');
 }
 
 function initChat() {
@@ -598,9 +819,8 @@ async function loadIntelligence() {
             return;
         }
 
-        // No cache but context exists → auto-generate without waiting for user click
-        if (data.has_context) {
-            // Keep loading spinner up, trigger generation automatically
+        // No cache but context exists → auto-generate (leader/admin only)
+        if (data.has_context && (USER_ROLE === 'admin' || USER_ROLE === 'leader')) {
             loading.style.display = 'block';
             loading.querySelector('p').textContent =
                 'Context found — generating intelligence report… (this may take 30–60 seconds)';
@@ -688,10 +908,23 @@ function renderIntelligence(data) {
     renderKnowledgeGaps(data.knowledgeGaps || []);
     renderServiceBlueprint(data.serviceBlueprint || {});
     renderPainPoints(data.painPoints || []);
-    renderTeamStructure(data.teamStructure || []);
     renderToolsInventory(data.toolsInventory || []);
     renderContextCoverage(data.contextCoverage || {});
-    renderAutomationReadiness(data.automationReadiness || {});
+
+    // Update sub-tab indicator dots
+    const indicators = {
+        profile: !!(data.businessProfile && Object.keys(data.businessProfile).length),
+        blueprint: !!((data.serviceBlueprint || {}).stages || []).length,
+        painpoints: !!(data.painPoints && data.painPoints.length),
+        gaps: !!(data.knowledgeGaps && data.knowledgeGaps.length),
+        canvas: !!(data.businessModelCanvas && Object.keys(data.businessModelCanvas).length),
+        tools: !!(data.toolsInventory && data.toolsInventory.length),
+        coverage: !!(data.contextCoverage && Object.keys(data.contextCoverage).length),
+    };
+    document.querySelectorAll('.intel-subtab').forEach(btn => {
+        const key = btn.dataset.subtab;
+        btn.classList.toggle('has-data', !!indicators[key]);
+    });
 }
 
 function profileFieldLabel(key) {
@@ -1034,8 +1267,8 @@ function scoreClass(score) {
     return 'score-low';
 }
 
-function renderAutomationReadiness(readiness) {
-    const container = document.getElementById('intel-automation-readiness');
+function renderAutomationReadiness(readiness, containerId) {
+    const container = document.getElementById(containerId || 'intel-automation-readiness');
     if (!readiness || Object.keys(readiness).length === 0) {
         container.innerHTML = `
             <div class="intel-card-header"><h3>🤖 Automation Readiness</h3></div>
@@ -1147,8 +1380,8 @@ function renderPainPoints(painPoints) {
     `;
 }
 
-function renderTeamStructure(team) {
-    const container = document.getElementById('intel-team-structure');
+function renderTeamStructure(team, containerId) {
+    const container = document.getElementById(containerId || 'intel-team-structure');
     if (!team || !team.length) {
         container.innerHTML = `
             <div class="intel-card-header"><h3>👥 Team & Org Structure</h3></div>
