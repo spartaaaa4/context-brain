@@ -5,10 +5,78 @@
 {% endblock %}
 {% block content %}
 <div class="dashboard">
-    <div class="dashboard-header">
-        <h1>Business Verticals</h1>
-        <p class="dashboard-subtitle">Select a vertical to start capturing operational context</p>
+    <section class="dashboard-hero">
+        <div class="dashboard-hero-copy">
+            <div class="dashboard-eyebrow">BetterPlace AI Labs</div>
+            <h1>Capture operational reality. Generate intelligence you can act on.</h1>
+            <p class="dashboard-subtitle">Context Brain helps teams document real workflows, tools, bottlenecks, and team structure so AI Labs can identify the best automation opportunities with confidence.</p>
+            <div class="dashboard-summary-strip" id="dashboard-summary-strip">
+                <div class="dashboard-summary-card">
+                    <span class="dashboard-summary-value">--</span>
+                    <span class="dashboard-summary-label">Verticals</span>
+                </div>
+                <div class="dashboard-summary-card">
+                    <span class="dashboard-summary-value">--</span>
+                    <span class="dashboard-summary-label">Messages</span>
+                </div>
+                <div class="dashboard-summary-card">
+                    <span class="dashboard-summary-value">--</span>
+                    <span class="dashboard-summary-label">Documents</span>
+                </div>
+                <div class="dashboard-summary-card">
+                    <span class="dashboard-summary-value">--</span>
+                    <span class="dashboard-summary-label">Notes</span>
+                </div>
+            </div>
+        </div>
+        <div class="dashboard-hero-panel">
+            <div class="dashboard-role-card">
+                <span class="dashboard-role-icon">✍️</span>
+                <div>
+                    <h3>For Contributors</h3>
+                    <p>Share workflows, tools, and operating realities through chat, documents, and notes.</p>
+                </div>
+            </div>
+            <div class="dashboard-role-card">
+                <span class="dashboard-role-icon">✅</span>
+                <div>
+                    <h3>For Reviewers</h3>
+                    <p>Validate the intelligence, improve output quality, and refine the process view over time.</p>
+                </div>
+            </div>
+            <div class="dashboard-flow">
+                <div class="dashboard-flow-step">
+                    <span class="dashboard-flow-number">01</span>
+                    <div>
+                        <strong>Capture</strong>
+                        <p>Guided discovery, uploads, and notes.</p>
+                    </div>
+                </div>
+                <div class="dashboard-flow-step">
+                    <span class="dashboard-flow-number">02</span>
+                    <div>
+                        <strong>Synthesize</strong>
+                        <p>Generate process intelligence, cost insights, and automation opportunities.</p>
+                    </div>
+                </div>
+                <div class="dashboard-flow-step">
+                    <span class="dashboard-flow-number">03</span>
+                    <div>
+                        <strong>Validate</strong>
+                        <p>Review, correct, and improve the output continuously.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <div class="dashboard-section-header">
+        <div class="dashboard-header">
+            <h2>Business Verticals</h2>
+            <p class="dashboard-subtitle">Select a vertical to start capturing operational context.</p>
+        </div>
     </div>
+
     <div class="verticals-grid" id="verticals-grid">
         <div class="loading-state">Loading verticals...</div>
     </div>
