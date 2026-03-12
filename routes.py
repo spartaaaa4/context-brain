@@ -8,7 +8,7 @@ import base64
 from datetime import datetime
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, send_file, send_from_directory, current_app
 from flask_login import login_required, current_user
-from models import db, User, Vertical, Message, Document, Note, ProcessMap, ProcessMapFeedback, VerticalIntelligence, IntelligenceFeedback, UserVerticalRole
+from models import db, User, Vertical, Message, Document, Note, ProcessMap, ProcessMapFeedback, VerticalIntelligence, IntelligenceFeedback, UserVerticalRole, IntelligenceSection
 from functools import wraps
 
 main_routes = Blueprint("main", __name__)
@@ -484,6 +484,25 @@ def get_document_status(doc_id):
     })
 
 
+@api_routes.route("/documents/<int:doc_id>/retry", methods=["POST"])
+@login_required
+def retry_document_processing(doc_id):
+    doc = Document.query.get(doc_id)
+    if not doc:
+        return jsonify({"error": "Document not found"}), 404
+    if doc.processing_status not in ('failed',):
+        return jsonify({"error": "Document is not in failed state"}), 400
+    role, err = check_role(doc.vertical_id, 'contributor')
+    if err:
+        return err
+    doc.processing_status = 'pending'
+    doc.extracted_content = None
+    db.session.commit()
+    from ai_service import start_document_processing
+    start_document_processing(current_app._get_current_object(), doc.id)
+    return jsonify({"status": "retrying", "id": doc.id})
+
+
 @api_routes.route("/notes", methods=["POST"])
 @login_required
 def create_note():
@@ -507,6 +526,9 @@ def create_note():
     )
     db.session.add(note)
     db.session.commit()
+
+    from ai_service import start_incremental_intelligence
+    start_incremental_intelligence(current_app._get_current_object(), vertical_id, user_id=current_user.id)
 
     return jsonify({
         "id": note.id,
@@ -669,7 +691,7 @@ def _filter_intel_for_contributor(intel_data):
 @api_routes.route("/intelligence/<vertical_id>")
 @login_required
 def get_intelligence(vertical_id):
-    from ai_service import compute_context_hash
+    from ai_service import compute_context_hash, get_intel_generation_status, clean_json_response
     vertical = Vertical.query.get(vertical_id)
     if not vertical:
         return jsonify({"error": "Vertical not found"}), 404
@@ -700,11 +722,48 @@ def get_intelligence(vertical_id):
         try:
             intel = json.loads(cached.intelligence_data)
         except (json.JSONDecodeError, TypeError):
-            intel = cached.intelligence_data
-        if user_role in (None, 'contributor') and isinstance(intel, dict):
+            cleaned = clean_json_response(cached.intelligence_data)
+            try:
+                intel = json.loads(cleaned)
+            except (json.JSONDecodeError, TypeError):
+                intel = None
+        if intel and user_role in (None, 'contributor') and isinstance(intel, dict):
             intel = _filter_intel_for_contributor(intel)
         result["intelligence"] = intel
-        result["generated_at"] = cached.generated_at.isoformat()
+        result["generated_at"] = cached.generated_at.isoformat() if intel else None
+
+    gen_status = get_intel_generation_status(vertical_id)
+    if gen_status.get("status") == "generating":
+        result["generating"] = True
+        result["sections_total"] = gen_status.get("sections_total", 0)
+        result["sections_completed"] = gen_status.get("sections_completed", 0)
+        result["current_section"] = gen_status.get("current_section")
+        result["completed_sections"] = gen_status.get("completed_sections", [])
+
+        # Build partial intelligence from already-completed sections
+        sections = IntelligenceSection.query.filter_by(vertical_id=vertical_id).all()
+        partial = {}
+        for sec in sections:
+            if sec.section_data:
+                try:
+                    partial[sec.section_key] = json.loads(sec.section_data)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        if partial:
+            if user_role in (None, 'contributor'):
+                partial = _filter_intel_for_contributor(partial)
+            result["partial_intelligence"] = partial
+
+    # Section freshness info
+    sections = IntelligenceSection.query.filter_by(vertical_id=vertical_id).all()
+    section_freshness = {}
+    for sec in sections:
+        section_freshness[sec.section_key] = {
+            "fresh": sec.context_hash == current_hash,
+            "generated_at": sec.generated_at.isoformat() if sec.generated_at else None,
+            "version": sec.version or 1,
+        }
+    result["section_freshness"] = section_freshness
 
     return jsonify(result)
 
@@ -715,28 +774,107 @@ def refresh_intelligence(vertical_id):
     role, err = check_role(vertical_id, 'leader')
     if err:
         return err
-    from ai_service import generate_intelligence
+    from ai_service import start_intelligence_generation, get_intel_generation_status
+    from flask import current_app
+
     vertical = Vertical.query.get(vertical_id)
     if not vertical:
         return jsonify({"error": "Vertical not found"}), 404
 
-    try:
-        intel = generate_intelligence(vertical_id, current_user.id, force=True)
-        if not intel:
-            return jsonify({"error": "No context available to analyze"}), 400
+    status = get_intel_generation_status(vertical_id)
+    if status.get("status") == "generating":
+        return jsonify({"status": "generating", "message": "Intelligence generation already in progress"})
 
-        try:
-            data = json.loads(intel.intelligence_data)
-        except (json.JSONDecodeError, TypeError):
-            data = intel.intelligence_data
+    start_intelligence_generation(current_app._get_current_object(), vertical_id, current_user.id)
+    return jsonify({"status": "generating", "message": "Intelligence generation started"})
 
-        return jsonify({
-            "intelligence": data,
-            "generated_at": intel.generated_at.isoformat(),
-            "stale": False,
-        })
-    except Exception as e:
-        return jsonify({"error": f"Intelligence generation failed: {str(e)}"}), 500
+
+@api_routes.route("/intelligence/<vertical_id>/refresh/<section_key>", methods=["POST"])
+@login_required
+def refresh_intelligence_section(vertical_id, section_key):
+    role, err = check_role(vertical_id, 'leader')
+    if err:
+        return err
+    from ai_service import start_intelligence_generation, get_intel_generation_status, INTELLIGENCE_SECTION_ORDER
+    from flask import current_app
+
+    if section_key not in INTELLIGENCE_SECTION_ORDER:
+        return jsonify({"error": f"Unknown section: {section_key}"}), 400
+
+    vertical = Vertical.query.get(vertical_id)
+    if not vertical:
+        return jsonify({"error": "Vertical not found"}), 404
+
+    status = get_intel_generation_status(vertical_id)
+    if status.get("status") == "generating":
+        return jsonify({"status": "generating", "message": "Intelligence generation already in progress"})
+
+    start_intelligence_generation(current_app._get_current_object(), vertical_id, current_user.id, force=True, sections=[section_key])
+    return jsonify({"status": "generating", "message": f"Regenerating {section_key}", "section": section_key})
+
+
+@api_routes.route("/intelligence/<vertical_id>/status")
+@login_required
+def intelligence_status(vertical_id):
+    from ai_service import get_intel_generation_status, clean_json_response
+    status = get_intel_generation_status(vertical_id)
+    gen_status = status.get("status")
+    gen_error = status.get("error")
+
+    if gen_status == "done":
+        cached = VerticalIntelligence.query.filter_by(
+            vertical_id=vertical_id
+        ).order_by(VerticalIntelligence.generated_at.desc()).first()
+
+        if cached:
+            try:
+                intel = json.loads(cached.intelligence_data)
+            except (json.JSONDecodeError, TypeError):
+                cleaned = clean_json_response(cached.intelligence_data)
+                try:
+                    intel = json.loads(cleaned)
+                except (json.JSONDecodeError, TypeError):
+                    intel = cached.intelligence_data
+
+            user_role = get_user_role(current_user, vertical_id)
+            if user_role in (None, 'contributor') and isinstance(intel, dict):
+                intel = _filter_intel_for_contributor(intel)
+
+            return jsonify({
+                "status": "done",
+                "intelligence": intel,
+                "generated_at": cached.generated_at.isoformat(),
+            })
+        return jsonify({"status": "done", "intelligence": None})
+
+    if gen_status == "failed":
+        return jsonify({"status": "failed", "error": gen_error or "Generation failed"})
+
+    if gen_status == "generating":
+        resp = {
+            "status": "generating",
+            "sections_total": status.get("sections_total", 0),
+            "sections_completed": status.get("sections_completed", 0),
+            "current_section": status.get("current_section"),
+            "completed_sections": status.get("completed_sections", []),
+        }
+        # Include partial results from already-completed sections
+        sections = IntelligenceSection.query.filter_by(vertical_id=vertical_id).all()
+        partial = {}
+        for sec in sections:
+            if sec.section_key in (status.get("completed_sections") or []) and sec.section_data:
+                try:
+                    partial[sec.section_key] = json.loads(sec.section_data)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        if partial:
+            user_role = get_user_role(current_user, vertical_id)
+            if user_role in (None, 'contributor'):
+                partial = _filter_intel_for_contributor(partial)
+            resp["partial_intelligence"] = partial
+        return jsonify(resp)
+
+    return jsonify({"status": "idle"})
 
 
 @api_routes.route("/intelligence/<vertical_id>/feedback", methods=["POST"])

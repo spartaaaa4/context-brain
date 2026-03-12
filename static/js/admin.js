@@ -228,6 +228,8 @@ async function loadAdminProcessMap(verticalId) {
 }
 
 let allVerticals = [];
+let allUsers = [];
+let pendingRoleChanges = {};
 
 async function loadUsers() {
     try {
@@ -235,102 +237,138 @@ async function loadUsers() {
             fetch('/admin/api/users'),
             fetch('/api/verticals')
         ]);
-        const users = await usersRes.json();
+        allUsers = await usersRes.json();
         allVerticals = await verticalsRes.json();
-        const section = document.getElementById('admin-users-section');
-
-        const thStyle = 'padding:12px 16px;text-align:left;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px';
-        const tdStyle = 'padding:12px 16px;font-size:14px';
-
-        section.innerHTML = `
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;margin-top:24px">
-                <h2 style="font-size:20px;font-weight:600">User Management</h2>
-                <button onclick="addUser()" style="padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500">+ Add User</button>
-            </div>
-            <div style="overflow-x:auto">
-                <table style="width:100%;border-collapse:collapse;background:var(--bg-secondary);border-radius:12px;overflow:hidden">
-                    <thead>
-                        <tr style="border-bottom:1px solid var(--border-color)">
-                            <th style="${thStyle}">Email</th>
-                            <th style="${thStyle}">Name</th>
-                            <th style="${thStyle}">PIN</th>
-                            <th style="${thStyle}">Vertical Roles</th>
-                            <th style="${thStyle}">Admin</th>
-                            <th style="${thStyle};text-align:right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${users.map(u => {
-                            const rolesBadges = (u.vertical_roles || []).map(r =>
-                                `<span class="role-badge role-${r.role}" style="margin-right:4px">${esc(r.vertical_name)}: ${r.role}</span>`
-                            ).join('') || '<span style="color:var(--text-muted);font-size:12px">No assignments</span>';
-                            return `
-                            <tr style="border-bottom:1px solid var(--border-color)">
-                                <td style="${tdStyle};color:var(--text-primary)">${esc(u.email)}</td>
-                                <td style="${tdStyle};color:var(--text-secondary)">${esc(u.display_name || '')}</td>
-                                <td style="${tdStyle};font-family:'JetBrains Mono',monospace;color:var(--text-primary)">${esc(u.pin || '—')}</td>
-                                <td style="${tdStyle}">${rolesBadges}</td>
-                                <td style="${tdStyle};font-size:13px">${u.is_admin ? '<span style="color:#10B981">Yes</span>' : '<span style="color:var(--text-muted)">No</span>'}</td>
-                                <td style="${tdStyle};text-align:right;white-space:nowrap">
-                                    <button onclick="showAssignRole('${esc(u.id)}', '${esc(u.display_name || u.email)}')" style="padding:4px 10px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);border-radius:6px;color:#818CF8;cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;margin-right:4px">Assign Role</button>
-                                    <button onclick="regenPin('${esc(u.email)}')" style="padding:4px 10px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:6px;color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;margin-right:4px">Regen PIN</button>
-                                    <button onclick="removeUser('${esc(u.email)}')" style="padding:4px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;color:#EF4444;cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif">Remove</button>
-                                </td>
-                            </tr>`;
-                        }).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
+        pendingRoleChanges = {};
+        renderUserManagement();
     } catch (e) {
         console.error('Failed to load users:', e);
     }
 }
 
-window.showAssignRole = function(userId, userName) {
-    const verticalOptions = allVerticals.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
-    const html = `
-        <div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000" id="assign-role-modal">
-            <div style="background:var(--bg-secondary);border-radius:12px;padding:24px;max-width:400px;width:90%">
-                <h3 style="margin:0 0 16px 0;font-size:16px">Assign Role: ${esc(userName)}</h3>
-                <div style="margin-bottom:12px">
-                    <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:4px">Vertical</label>
-                    <select id="assign-vertical" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);font-family:'DM Sans',sans-serif">${verticalOptions}</select>
+function renderUserManagement() {
+    const section = document.getElementById('admin-users-section');
+
+    const verticalHeaders = allVerticals.map(v =>
+        `<th class="role-matrix-th"><span class="role-matrix-vname">${esc(v.icon)} ${esc(v.name)}</span></th>`
+    ).join('');
+
+    const userRows = allUsers.map(u => {
+        const roleMap = {};
+        (u.vertical_roles || []).forEach(r => { roleMap[r.vertical_id] = r.role; });
+
+        const verticalCells = allVerticals.map(v => {
+            const currentRole = roleMap[v.id] || '';
+            const selectId = `role-${u.id}-${v.id}`;
+            return `<td class="role-matrix-td">
+                <select class="role-matrix-select" id="${selectId}" data-user="${u.id}" data-vertical="${v.id}" data-original="${currentRole}" onchange="markRoleChange(this)">
+                    <option value="" ${!currentRole ? 'selected' : ''}>—</option>
+                    <option value="contributor" ${currentRole === 'contributor' ? 'selected' : ''}>Contributor</option>
+                    <option value="leader" ${currentRole === 'leader' ? 'selected' : ''}>Leader</option>
+                </select>
+            </td>`;
+        }).join('');
+
+        return `<tr class="role-matrix-row">
+            <td class="role-matrix-user">
+                <div class="role-matrix-user-info">
+                    <span class="role-matrix-name">${esc(u.display_name || u.email)}</span>
+                    <span class="role-matrix-email">${esc(u.email)}</span>
                 </div>
-                <div style="margin-bottom:16px">
-                    <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:4px">Role</label>
-                    <select id="assign-role" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);font-family:'DM Sans',sans-serif">
-                        <option value="contributor">Contributor</option>
-                        <option value="leader">Leader</option>
-                    </select>
-                </div>
-                <div style="display:flex;gap:8px;justify-content:flex-end">
-                    <button onclick="document.getElementById('assign-role-modal').remove()" style="padding:8px 16px;background:var(--bg-card);border:1px solid var(--border-color);border-radius:8px;color:var(--text-secondary);cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px">Cancel</button>
-                    <button onclick="submitAssignRole('${esc(userId)}')" style="padding:8px 16px;background:var(--accent);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500">Assign</button>
-                </div>
+            </td>
+            <td class="role-matrix-td role-matrix-pin">${esc(u.pin || '—')}</td>
+            <td class="role-matrix-td">${u.is_admin ? '<span class="role-matrix-admin-yes">Admin</span>' : ''}</td>
+            ${verticalCells}
+            <td class="role-matrix-td role-matrix-actions">
+                <button onclick="regenPin('${esc(u.email)}')" class="role-matrix-btn" title="Regenerate PIN">🔄</button>
+                <button onclick="removeUser('${esc(u.email)}')" class="role-matrix-btn role-matrix-btn-danger" title="Remove user">✕</button>
+            </td>
+        </tr>`;
+    }).join('');
+
+    section.innerHTML = `
+        <div class="role-matrix-header">
+            <h2>User & Role Management</h2>
+            <div class="role-matrix-header-actions">
+                <button onclick="addUser()" class="role-matrix-add-btn">+ Add User</button>
+                <button onclick="saveAllRoles()" class="role-matrix-save-btn" id="save-roles-btn" disabled>Save Changes</button>
             </div>
         </div>
+        <p class="role-matrix-hint">Change role dropdowns for any user across verticals, then click "Save Changes" to apply all at once.</p>
+        <div class="role-matrix-wrap">
+            <table class="role-matrix-table">
+                <thead>
+                    <tr>
+                        <th class="role-matrix-th role-matrix-th-user">User</th>
+                        <th class="role-matrix-th">PIN</th>
+                        <th class="role-matrix-th">Status</th>
+                        ${verticalHeaders}
+                        <th class="role-matrix-th"></th>
+                    </tr>
+                </thead>
+                <tbody>${userRows}</tbody>
+            </table>
+        </div>
     `;
-    document.body.insertAdjacentHTML('beforeend', html);
+}
+
+window.markRoleChange = function(select) {
+    const userId = select.dataset.user;
+    const verticalId = select.dataset.vertical;
+    const original = select.dataset.original;
+    const newVal = select.value;
+    const key = `${userId}__${verticalId}`;
+
+    if (newVal === original) {
+        delete pendingRoleChanges[key];
+        select.classList.remove('role-changed');
+    } else {
+        pendingRoleChanges[key] = { user_id: userId, vertical_id: verticalId, role: newVal };
+        select.classList.add('role-changed');
+    }
+
+    const btn = document.getElementById('save-roles-btn');
+    const count = Object.keys(pendingRoleChanges).length;
+    btn.disabled = count === 0;
+    btn.textContent = count > 0 ? `Save Changes (${count})` : 'Save Changes';
 };
 
-window.submitAssignRole = async function(userId) {
-    const verticalId = document.getElementById('assign-vertical').value;
-    const role = document.getElementById('assign-role').value;
-    try {
-        const res = await fetch('/admin/api/user-roles', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({user_id: userId, vertical_id: verticalId, role})
-        });
-        const data = await res.json();
-        if (!res.ok) { alert(data.error || 'Failed to assign role'); return; }
-        const modal = document.getElementById('assign-role-modal');
-        if (modal) modal.remove();
-        loadUsers();
-    } catch (e) {
-        alert('Failed to assign role');
+window.saveAllRoles = async function() {
+    const changes = Object.values(pendingRoleChanges);
+    if (!changes.length) return;
+
+    const btn = document.getElementById('save-roles-btn');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    let errors = 0;
+    for (const change of changes) {
+        try {
+            if (change.role === '') {
+                const rolesRes = await fetch('/admin/api/user-roles');
+                const allRoles = await rolesRes.json();
+                const existing = allRoles.find(r => r.user_id === change.user_id && r.vertical_id === change.vertical_id);
+                if (existing) {
+                    const res = await fetch(`/admin/api/user-roles/${existing.id}`, { method: 'DELETE' });
+                    if (!res.ok) errors++;
+                }
+            } else {
+                const res = await fetch('/admin/api/user-roles', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(change)
+                });
+                if (!res.ok) errors++;
+            }
+        } catch (e) {
+            errors++;
+        }
     }
+
+    if (errors > 0) {
+        alert(`${errors} of ${changes.length} changes failed. Please retry.`);
+    }
+    loadUsers();
 };
 
 window.addUser = async function() {

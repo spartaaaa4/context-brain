@@ -7,13 +7,35 @@ import re
 from anthropic import Anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 import hashlib
-from models import db, Message, Document, Vertical, Note, ProcessMap, ProcessMapFeedback, VerticalIntelligence, IntelligenceFeedback
+from datetime import datetime
+from models import db, Message, Document, Vertical, Note, ProcessMap, ProcessMapFeedback, VerticalIntelligence, IntelligenceFeedback, IntelligenceSection
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 client = Anthropic(
     api_key=ANTHROPIC_API_KEY,
 )
+
+# In-memory tracking for async intelligence generation
+_intel_generation_status = {}
+
+
+def get_intel_generation_status(vertical_id):
+    return _intel_generation_status.get(vertical_id, {})
+
+
+def clean_json_response(text):
+    """Strip markdown code fences and extract raw JSON from Claude responses."""
+    if not text:
+        return text
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        first_newline = cleaned.find("\n")
+        if first_newline != -1:
+            cleaned = cleaned[first_newline + 1:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3].strip()
+    return cleaned
 
 DISCOVERY_PHASES = [
     {
@@ -209,6 +231,38 @@ INTERVIEW STYLE:
 - If someone provides irrelevant or off-topic information, gently redirect: acknowledge what they said, then steer back with "That's helpful context. Going back to [topic] — could you tell me about [specific question]?"
 - If someone gives very short answers, encourage them: "Could you walk me through a real example of how that works day-to-day?"
 
+STRUCTURED QUESTIONS (MCQ / Multi-select):
+When a question has a natural set of possible answers (e.g., categories, frequency ranges, yes/no, tools from a known list), present it as a structured clickable question using this exact format:
+
+For single-select (user picks one):
+[MCQ]
+What is the average time to fill a position?
+- Less than 24 hours
+- 1-3 days
+- 4-7 days
+- More than a week
+[/MCQ]
+
+For multi-select (user picks multiple):
+[MCQ:multi]
+Which communication channels does your team use?
+- WhatsApp
+- Phone calls
+- Email
+- SMS
+- In-app notifications
+- Other
+[/MCQ]
+
+Rules for structured questions:
+- Use MCQ when the answer is likely one of several known categories or ranges
+- Use MCQ:multi when the user might select more than one option
+- Always include an open-ended option like "Other" when the list might not be exhaustive
+- Mix structured questions with open-ended ones — don't make every question an MCQ
+- After the user selects an option, you can follow up with an open-ended question to dig deeper
+- You can include regular text before or after an MCQ block
+- Use these especially for: scale/volume ranges, frequency, tool lists, yes/no with nuance, severity ratings, categories
+
 START by greeting them warmly, acknowledging their organization, and asking them to describe what their business actually does in their own words — even if the seed context already describes it. Their perspective matters.
 
 CRITICAL: You are gathering intelligence to help build AI automation. Pay extra attention to manual, repetitive, time-consuming activities — those are the highest-value automation targets. When you hear something manual, always ask: how long does it take, how often, and how many people are involved.
@@ -254,37 +308,148 @@ def send_chat_message(vertical, messages_history, user_message):
 
 
 def get_document_extraction_prompt(vertical, doc_type, user_description):
-    return f"""You are analyzing a document uploaded by a team member from {vertical.name} ({vertical.geography} — {vertical.type}).
+    return f"""You are a senior analyst extracting deep intelligence from a document uploaded by a team member from {vertical.name} ({vertical.geography} — {vertical.type}).
 
 The user described this document as: "{user_description}"
 Document type: {doc_type}
 
-Extract and structure the following information from this document. Return ONLY valid JSON (no markdown, no backticks):
+Extract EVERY piece of useful information. Be exhaustive. Preserve specific numbers, names, and quotes exactly as they appear. Return ONLY valid JSON (no markdown, no backticks):
 
 {{
-  "summary": "2-3 sentence summary of what this document covers",
-  "processSteps": [
+  "summary": "Comprehensive 5-10 sentence summary covering the document's purpose, scope, and key findings",
+  "processFlows": [
     {{
-      "name": "Step name",
-      "description": "What happens in this step",
-      "owner": "Who is responsible (if mentioned)",
-      "tools": "Tools/systems referenced (if any)"
+      "processName": "Name of this process or workflow",
+      "steps": [
+        {{
+          "name": "Step name",
+          "description": "Detailed description of what happens",
+          "owner": "Who is responsible (role or team name) or null",
+          "tools": ["Tools/systems used in this step"],
+          "preconditions": "What must be true before this step or null",
+          "outputs": "What this step produces or null",
+          "decisionPoints": "Any branching logic or conditions or null",
+          "timeEstimate": "How long this step takes or null",
+          "frequency": "How often this happens (daily, per request, etc.) or null",
+          "volume": "Number of times per day/week/month or null",
+          "exceptions": "What happens when things go wrong or null",
+          "dependencies": ["Other steps or systems this depends on"]
+        }}
+      ]
     }}
   ],
-  "rolesFound": ["List of job roles or team names mentioned"],
-  "toolsFound": ["List of software, apps, or systems mentioned"],
-  "metricsFound": {{}},
-  "painPointsFound": ["Any complaints, bottlenecks, or issues mentioned"],
-  "keyFacts": ["Other important facts or context extracted"],
-  "relevanceScore": "high|medium|low — how relevant is this to understanding operational processes"
+  "organizationalInfo": {{
+    "teamStructure": [
+      {{
+        "role": "Role or title",
+        "headcount": "Number of people or null",
+        "responsibilities": "Key responsibilities",
+        "reportsTo": "Who they report to or null",
+        "processSteps": ["Which process steps they own"]
+      }}
+    ],
+    "reportingLines": "Description of org hierarchy if mentioned or null",
+    "totalHeadcount": "Total team size if mentioned or null"
+  }},
+  "financialData": {{
+    "costs": [
+      {{
+        "item": "What the cost is for",
+        "amount": "Exact amount as stated in document",
+        "period": "per month, per year, per transaction, etc. or null",
+        "context": "Additional context about this cost"
+      }}
+    ],
+    "pricing": [
+      {{
+        "model": "Pricing model description",
+        "amount": "Price point or range",
+        "context": "Who pays, when, for what"
+      }}
+    ],
+    "budgets": "Any budget allocations mentioned or null",
+    "unitEconomics": "Revenue or cost per unit/transaction if mentioned or null"
+  }},
+  "clientInfo": [
+    {{
+      "name": "Client or customer name",
+      "industry": "Industry or segment or null",
+      "size": "Company size or volume or null",
+      "sla": "Service level requirements or null",
+      "relationship": "Nature of the relationship or null"
+    }}
+  ],
+  "technologyStack": [
+    {{
+      "name": "Tool, app, or system name",
+      "purpose": "What it is used for",
+      "usedBy": "Who uses it or null",
+      "integrations": ["Other systems it connects to"],
+      "limitations": "Known limitations or complaints or null"
+    }}
+  ],
+  "painPointsAndChallenges": [
+    {{
+      "issue": "Description of the pain point or challenge",
+      "severity": "high|medium|low — based on language and context",
+      "affectedArea": "Which process or team is affected",
+      "currentWorkaround": "How they handle it now or null",
+      "impact": "Business impact (time wasted, cost, errors, etc.) or null"
+    }}
+  ],
+  "metricsAndKPIs": [
+    {{
+      "metric": "Name of the metric",
+      "value": "The exact value as stated",
+      "period": "Time period or null",
+      "context": "What this metric measures and why it matters"
+    }}
+  ],
+  "complianceAndRegulatory": [
+    {{
+      "requirement": "Regulatory or compliance requirement",
+      "applicability": "When or to whom it applies",
+      "procedure": "How they comply or null",
+      "risk": "What happens if not complied with or null"
+    }}
+  ],
+  "directQuotes": [
+    {{
+      "quote": "Exact verbatim text from the document",
+      "context": "Why this quote is significant",
+      "speaker": "Who said it, if identifiable, or null"
+    }}
+  ],
+  "specificNumbers": [
+    {{
+      "value": "The exact number or statistic",
+      "meaning": "What this number represents",
+      "source": "Where in the document this appeared"
+    }}
+  ],
+  "relationships": [
+    {{
+      "from": "Entity A (person, team, system, process)",
+      "to": "Entity B",
+      "type": "Nature of relationship (reports to, feeds into, integrates with, depends on, etc.)"
+    }}
+  ],
+  "keyFacts": ["Other important facts not captured above — preserve detail"],
+  "relevanceScore": "high|medium|low"
 }}
 
-If this is a meeting transcript, also extract:
-- "decisions": ["Decisions made during the meeting"]
-- "actionItems": ["Action items assigned"]
-- "discussionTopics": ["Key topics discussed"]
+If this is a meeting transcript, also include:
+- "decisions": [{{"decision": "What was decided", "owner": "Who is responsible", "deadline": "When, or null"}}]
+- "actionItems": [{{"item": "Action to take", "owner": "Who", "deadline": "When, or null", "status": "open"}}]
+- "discussionTopics": [{{"topic": "Subject discussed", "keyPoints": ["Main points made"], "outcome": "Resolution or next step"}}]
 
-Be thorough. Extract everything that could help understand this organization's operations."""
+CRITICAL RULES:
+- Preserve ALL specific numbers exactly (amounts, percentages, dates, volumes, headcounts)
+- Preserve ALL names (people, companies, tools, systems, locations)
+- For any field where the document provides no information, use null — do NOT guess
+- Include direct quotes for any particularly insightful or important statements
+- Extract relationships between entities whenever possible
+- Be exhaustive — it is better to extract too much than too little"""
 
 
 @retry(
@@ -330,12 +495,42 @@ def process_document_content(doc, vertical, text_content=None, base64_content=No
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=2048,
+        max_tokens=4096,
         system=system_prompt,
         messages=[{"role": "user", "content": messages_content}]
     )
 
     return response.content[0].text
+
+
+def extract_pdf_text(doc):
+    """Extract text from a PDF using PyPDF2 as fallback for large files."""
+    try:
+        from PyPDF2 import PdfReader
+        if doc.file_data:
+            reader = PdfReader(io.BytesIO(base64.b64decode(doc.file_data)))
+        elif doc.file_path:
+            reader = PdfReader(doc.file_path)
+        else:
+            return None
+        text_parts = []
+        for i, page in enumerate(reader.pages):
+            try:
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    text_parts.append(f"--- Page {i + 1} ---\n{page_text}")
+            except Exception:
+                continue
+            if len("\n".join(text_parts)) > 80000:
+                break
+        full_text = "\n".join(text_parts)
+        return full_text[:80000] if full_text.strip() else None
+    except Exception as e:
+        print(f"PyPDF2 extraction failed for {doc.filename}: {e}")
+        return None
+
+
+MAX_PDF_SIZE_FOR_VISION = 10 * 1024 * 1024  # 10 MB — above this, use text extraction
 
 
 def process_document_background(app, doc_id):
@@ -357,10 +552,10 @@ def process_document_background(app, doc_id):
 
             if doc.file_type in ('txt', 'csv'):
                 if doc.file_data:
-                    text_content = base64.b64decode(doc.file_data).decode('utf-8', errors='ignore')[:50000]
+                    text_content = base64.b64decode(doc.file_data).decode('utf-8', errors='ignore')[:80000]
                 else:
                     with open(file_path, 'r', errors='ignore') as f:
-                        text_content = f.read()[:50000]
+                        text_content = f.read()[:80000]
             elif doc.file_type == 'xlsx':
                 import openpyxl
                 if doc.file_data:
@@ -383,7 +578,7 @@ def process_document_background(app, doc_id):
                                     row_data.append(f"{header}: {val}")
                             if row_data:
                                 text_parts.append(", ".join(row_data))
-                text_content = "\n".join(text_parts)[:50000]
+                text_content = "\n".join(text_parts)[:80000]
             elif doc.file_type == 'docx':
                 import docx
                 if doc.file_data:
@@ -399,14 +594,29 @@ def process_document_background(app, doc_id):
                     for row in table.rows:
                         row_text = " | ".join([cell.text.strip() for cell in row.cells])
                         text_parts.append(row_text)
-                text_content = "\n".join(text_parts)[:50000]
+                text_content = "\n".join(text_parts)[:80000]
             elif doc.file_type == 'pdf':
-                if doc.file_data:
-                    base64_content = doc.file_data
+                raw_size = doc.file_size or 0
+                if raw_size > MAX_PDF_SIZE_FOR_VISION:
+                    # Large PDF — extract text with PyPDF2 instead of sending binary
+                    print(f"PDF {doc.filename} is {raw_size / 1024 / 1024:.1f}MB — using text extraction")
+                    text_content = extract_pdf_text(doc)
+                    if not text_content:
+                        # If text extraction yielded nothing, try vision anyway (will likely fail)
+                        print(f"Text extraction empty for {doc.filename}, trying vision API")
+                        if doc.file_data:
+                            base64_content = doc.file_data
+                        elif file_path:
+                            with open(file_path, 'rb') as f:
+                                base64_content = base64.b64encode(f.read()).decode('utf-8')
+                        media_type = "application/pdf"
                 else:
-                    with open(file_path, 'rb') as f:
-                        base64_content = base64.b64encode(f.read()).decode('utf-8')
-                media_type = "application/pdf"
+                    if doc.file_data:
+                        base64_content = doc.file_data
+                    elif file_path:
+                        with open(file_path, 'rb') as f:
+                            base64_content = base64.b64encode(f.read()).decode('utf-8')
+                    media_type = "application/pdf"
             elif doc.file_type in ('image', 'png', 'jpg', 'jpeg'):
                 ext_map = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'image': 'image/jpeg'}
                 media_type = ext_map.get(doc.file_type, 'image/jpeg')
@@ -416,17 +626,29 @@ def process_document_background(app, doc_id):
                     with open(file_path, 'rb') as f:
                         base64_content = base64.b64encode(f.read()).decode('utf-8')
 
+            # Store raw full text for intelligence context
+            if text_content:
+                doc.full_text = text_content
+            elif doc.file_type == 'pdf' and base64_content:
+                # For small PDFs sent via vision API, also extract text as backup
+                pdf_text = extract_pdf_text(doc)
+                if pdf_text:
+                    doc.full_text = pdf_text
+            db.session.commit()
+
             result = process_document_content(doc, vertical, text_content, base64_content, media_type)
             if result:
                 doc.extracted_content = result
                 doc.processing_status = 'done'
+                db.session.commit()
+                start_incremental_intelligence(app, doc.vertical_id, user_id=doc.user_id)
             else:
                 doc.processing_status = 'failed'
+                db.session.commit()
         except Exception as e:
-            print(f"Document processing error: {e}")
+            print(f"Document processing error for {doc.filename}: {e}")
             doc.processing_status = 'failed'
-
-        db.session.commit()
+            db.session.commit()
 
 
 def start_document_processing(app, doc_id):
@@ -595,7 +817,50 @@ def compute_context_hash(vertical_id):
     return hashlib.md5(raw.encode()).hexdigest()
 
 
+def _flatten_extracted_json(ec):
+    """Convert extracted_content JSON string to readable text."""
+    try:
+        parsed = json.loads(ec)
+        if not isinstance(parsed, dict):
+            return str(ec)
+        readable_parts = []
+        for key, val in parsed.items():
+            if val is None or val == '' or val == []:
+                continue
+            if isinstance(val, list):
+                items = []
+                for v in val:
+                    if isinstance(v, dict):
+                        items.append("; ".join(f"{k}: {vv}" for k, vv in v.items() if vv))
+                    else:
+                        items.append(str(v))
+                readable_parts.append(f"{key}:\n  " + "\n  ".join(items))
+            elif isinstance(val, dict):
+                sub_parts = []
+                for k, v in val.items():
+                    if v is None or v == '' or v == []:
+                        continue
+                    if isinstance(v, list):
+                        sub_parts.append(f"  {k}: {', '.join(str(x) for x in v)}")
+                    elif isinstance(v, dict):
+                        nested = "; ".join(f"{nk}: {nv}" for nk, nv in v.items() if nv)
+                        sub_parts.append(f"  {k}: {nested}")
+                    else:
+                        sub_parts.append(f"  {k}: {v}")
+                if sub_parts:
+                    readable_parts.append(f"{key}:\n" + "\n".join(sub_parts))
+            else:
+                readable_parts.append(f"{key}: {val}")
+        return "\n".join(readable_parts)
+    except (json.JSONDecodeError, TypeError):
+        return ec
+
+
 def gather_all_context(vertical_id):
+    """Assemble all context for intelligence generation.
+    Uses full_text as the primary document source for maximum detail,
+    with extracted_content as supplementary structured analysis.
+    """
     messages = Message.query.filter_by(vertical_id=vertical_id).order_by(Message.created_at).all()
     documents = Document.query.filter_by(vertical_id=vertical_id, processing_status='done').all()
     notes = Note.query.filter_by(vertical_id=vertical_id).all()
@@ -610,11 +875,17 @@ def gather_all_context(vertical_id):
             context_parts.append(f"{name} ({msg.role}): {msg.content}")
 
     if documents:
-        context_parts.append("\n--- UPLOADED DOCUMENTS (AI-extracted content) ---")
+        context_parts.append("\n--- UPLOADED DOCUMENTS ---")
         for doc in documents:
-            context_parts.append(f"Document: {doc.filename} (Type: {doc.doc_type})")
+            context_parts.append(f"\n=== Document: {doc.filename} (Type: {doc.doc_type}) ===")
+            if doc.user_description:
+                context_parts.append(f"User description: {doc.user_description}")
+
+            if doc.full_text:
+                context_parts.append(f"\n[Full Document Text]\n{doc.full_text}")
+
             if doc.extracted_content:
-                context_parts.append(doc.extracted_content)
+                context_parts.append(f"\n[AI-Extracted Analysis]\n{_flatten_extracted_json(doc.extracted_content)}")
 
     if notes:
         context_parts.append("\n--- NOTES ---")
@@ -624,224 +895,52 @@ def gather_all_context(vertical_id):
     return "\n".join(context_parts), len(messages), len(documents), len(notes)
 
 
-def get_intelligence_prompt(vertical):
-    return f"""You are a senior process analyst at BetterPlace Group's AI Labs. Analyze all available context for {vertical.name} ({vertical.geography} -- {vertical.type}) and produce a comprehensive intelligence report.
+INTELLIGENCE_SECTION_ORDER = [
+    'businessProfile',
+    'businessModelCanvas',
+    'serviceBlueprint',
+    'processMap',
+    'teamStructure',
+    'toolsInventory',
+    'painPoints',
+    'knowledgeGaps',
+    'contextCoverage',
+    'automationReadiness',
+]
 
-{vertical.seed_context}
+SECTION_LABELS = {
+    'businessProfile': 'Business Profile',
+    'businessModelCanvas': 'Business Model Canvas',
+    'serviceBlueprint': 'Service Blueprint',
+    'processMap': 'Process Map',
+    'teamStructure': 'Team Structure',
+    'toolsInventory': 'Tools & Systems',
+    'painPoints': 'Pain Points',
+    'knowledgeGaps': 'Knowledge Gaps',
+    'contextCoverage': 'Context Coverage',
+    'automationReadiness': 'Automation Readiness',
+}
 
-Return ONLY valid JSON (no markdown, no backticks):
+SECTION_MAX_TOKENS = {
+    'businessProfile': 1500,
+    'businessModelCanvas': 2500,
+    'serviceBlueprint': 3000,
+    'processMap': 2500,
+    'teamStructure': 1500,
+    'toolsInventory': 1200,
+    'painPoints': 1500,
+    'knowledgeGaps': 1200,
+    'contextCoverage': 1000,
+    'automationReadiness': 2500,
+}
 
-{{
-  "businessProfile": {{
-    "whatTheyDo": "2-3 sentence description or null",
-    "businessModel": "How they make money or null",
-    "geography": "Where they operate or null",
-    "scale": {{
-      "workerNetwork": "Size or null",
-      "clientCount": "Number or null",
-      "monthlyVolume": "Tasks/hires/shifts per month or null"
-    }},
-    "keyClients": ["Client names"] or null,
-    "teamSize": "Headcount and structure or null",
-    "primaryLanguages": ["Languages"] or null,
-    "communicationChannels": ["Channels"] or null
-  }},
-  "businessModelCanvas": {{
-    "valueProposition": {{
-      "toClients": "What clients pay for or null",
-      "toWorkers": "What workers/candidates/end users get or null"
-    }},
-    "revenueModel": {{
-      "pricingMechanism": "How pricing works or null",
-      "averageTicketSize": "Typical deal size or null",
-      "paymentTerms": "When clients pay or null",
-      "marginStructure": "Where margin comes from and where it leaks or null"
-    }},
-    "keyActivities": [
-      {{
-        "activity": "Activity name",
-        "category": "supply_acquisition|demand_fulfillment|operations|compliance|support",
-        "peopleInvolved": "How many people and which roles, or null",
-        "timePerWeek": "Estimated hours per week or null",
-        "costIntensity": "low|medium|high",
-        "automationReady": "low|medium|high",
-        "whyItMatters": "Why this activity is critical"
-      }}
-    ],
-    "keyResources": {{
-      "people": "Team description or null",
-      "technology": "Systems, apps, platforms or null",
-      "data": "What unique data they have that could power AI or null",
-      "relationships": "Key client or partner relationships or null"
-    }},
-    "costStructure": {{
-      "biggestCostDrivers": ["Top 3-4 cost items"],
-      "fixedVsVariable": "Mostly fixed or variable or null",
-      "unitEconomics": "Revenue minus cost per unit, if known, or null"
-    }},
-    "competitivePosition": {{
-      "competitors": ["Known competitors"] or null,
-      "defensibility": "What makes them hard to replace or null",
-      "vulnerability": "Where they could lose to competition or disruption or null"
-    }}
-  }},
-  "serviceBlueprint": {{
-    "processName": "Name of the core journey",
-    "costSummary": {{
-      "estimatedTotalMonthlyCost": "Approx total monthly ops cost string or null",
-      "highestCostStages": ["Stage name — cost string"],
-      "potentialSavings": "Estimated savings range from automation or null"
-    }},
-    "stages": [
-      {{
-        "stageName": "Stage name",
-        "customerJourney": {{
-          "action": "What the client/customer experiences",
-          "goal": "Why they do it or null"
-        }},
-        "workerJourney": {{
-          "action": "What the worker/candidate/end user does",
-          "friction": "Where they struggle or wait, or null"
-        }},
-        "opsTeamWork": {{
-          "action": "What the ops team does",
-          "owner": "Role/team",
-          "teamSize": "Number of people or null",
-          "hoursPerDay": "Hours spent per day per person or null",
-          "toolsUsed": ["Tools"],
-          "isManual": true,
-          "painPoint": "What's frustrating or null",
-          "costEstimate": {{
-            "monthlyHours": "Total person-hours per month or null",
-            "estimatedMonthlyCost": "Formatted monthly cost or null",
-            "costBasis": "Math behind the estimate or null",
-            "confidence": "high|medium|low"
-          }}
-        }},
-        "automationOpportunity": {{
-          "readiness": "low|medium|high",
-          "idea": "How AI could help or null",
-          "expectedImpact": "Expected impact or null"
-        }},
-        "validationQuestions": ["Specific questions to verify this stage"]
-      }}
-    ]
-  }},
-  "processMap": {{
-    "processName": "Name of the core process",
-    "steps": [
-      {{
-        "stepNumber": 1,
-        "name": "Step name",
-        "description": "Detailed description",
-        "owner": "Who does this",
-        "teamSize": "How many people involved or null",
-        "toolsUsed": ["Tools used"],
-        "estimatedTime": "How long or null",
-        "volume": "How often or null",
-        "painLevel": "low|medium|high",
-        "painDescription": "What makes this painful or null",
-        "automationPotential": "low|medium|high",
-        "automationIdea": "How AI could help or null",
-        "confidence": "high|medium|low",
-        "notes": "Additional context or null"
-      }}
-    ]
-  }},
-  "teamStructure": [
-    {{
-      "role": "Role name",
-      "headcount": "Number or null",
-      "responsibilities": "Key responsibilities",
-      "processSteps": ["Which process steps they own"]
-    }}
-  ],
-  "toolsInventory": [
-    {{
-      "name": "Tool name",
-      "type": "Tool type (CRM, spreadsheet, mobile app, etc.)",
-      "usedIn": ["Process steps"],
-      "usedBy": "Role/team"
-    }}
-  ],
-  "painPoints": [
-    {{
-      "severity": "high|medium|low",
-      "title": "Pain point title",
-      "currentEffort": "Time/money/people spent or null",
-      "affectedProcess": "Which process step or null",
-      "automationIdea": "How AI could help",
-      "expectedImpact": "What improvement to expect"
-    }}
-  ],
-  "knowledgeGaps": ["Specific questions about what is still missing"],
-  "contextCoverage": {{
-    "overall": 0,
-    "topics": [
-      {{
-        "name": "Discovery phase name",
-        "percentage": 0,
-        "captured": true,
-        "status": "well_covered|partial|not_covered",
-        "detail": "Why"
-      }}
-    ]
-  }},
-  "automationReadiness": {{
-    "overallScore": 72,
-    "contextCompleteness": {{
-      "score": 65,
-      "detail": "Coverage summary"
-    }},
-    "processClarity": {{
-      "score": 80,
-      "detail": "Process clarity summary"
-    }},
-    "dataAvailability": {{
-      "score": 60,
-      "detail": "Data availability summary"
-    }},
-    "teamReadiness": {{
-      "score": 75,
-      "detail": "Team readiness summary"
-    }},
-    "topAutomationCandidates": [
-      {{
-        "process": "What to automate",
-        "currentMonthlyCost": "Current cost string or null",
-        "automationType": "Type of AI agent/system",
-        "estimatedSavings": "Savings estimate or null",
-        "prerequisite": "What we need before building",
-        "timeToImplement": "Estimated time",
-        "priority": 1
-      }}
-    ],
-    "blockers": ["What is preventing automation today"],
-    "recommendedNextSteps": ["Specific next actions to move forward"]
-  }}
-}}
+# Sections that need other sections' outputs as input
+SYNTHESIS_SECTIONS = {'knowledgeGaps', 'automationReadiness'}
 
-Rules:
-- For any section where context is insufficient, return null for that section
-- Set contextCoverage based on REAL information, not just the seed context
-- Be specific -- use actual names, numbers, and tools mentioned in the context
-- For knowledgeGaps, generate specific questions based on what is MISSING
-- painPoints should only include things actually mentioned or strongly implied
-- Set confidence to 'low' for any step where you are inferring rather than directly told
-- If information was NOT provided for a field, set it to null rather than guessing
+# contextCoverage is computed programmatically, no Claude call
+COMPUTED_SECTIONS = {'contextCoverage'}
 
-BUSINESS MODEL CANVAS:
-Analyze this as a business, not just a process. Map the business model canvas to understand:
-- What exactly do clients pay for? What's the value promise?
-- What do workers/candidates get from this platform?
-- Where does the money come from and where does it go?
-- What are the key activities and which ones consume the most ops bandwidth?
-- What data does this business generate that could be a competitive advantage for AI?
-
-For each key activity, estimate cost intensity and automation readiness. These ratings directly drive automation priority decisions.
-If this is a software business, adapt clients = enterprise buyers, workers = end users, and key activities = product development + sales + implementation.
-
-COST ESTIMATION:
+_COST_ESTIMATION_INSTRUCTIONS = """COST ESTIMATION:
 For every ops activity where you know or can reasonably estimate headcount and time spent, calculate a monthly cost estimate.
 Use these assumptions:
 - India ops team: ~₹25,000/month per person (₹142/hour for 176 hours/month)
@@ -849,17 +948,326 @@ Use these assumptions:
 - Indonesia ops team: ~Rp5,000,000/month per person
 - Multiply: (people × hours_per_day × 22 working_days) / 176 × monthly_salary
 
-Always show your math in costBasis and set confidence based on evidence.
+Always show your math in costBasis and set confidence based on evidence."""
 
-AUTOMATION READINESS SCORECARD:
-Rate this vertical on 4 dimensions (0-100):
-1. Context Completeness
-2. Process Clarity
-3. Data Availability
-4. Team Readiness
 
-Overall score = weighted average (context 30%, process 30%, data 25%, readiness 15%).
-Then list the top automation candidates ranked by monthly cost × automation feasibility, plus blockers and recommended next steps."""
+def _incremental_preamble(previous_data):
+    """Build the incremental-update preamble if a previous version exists."""
+    if not previous_data:
+        return ""
+    prev_json = json.dumps(previous_data, indent=2, default=str)
+    return f"""PREVIOUS ANALYSIS (your prior version — refine, do not discard):
+{prev_json}
+
+INSTRUCTIONS FOR UPDATE:
+- Preserve and refine all existing insights that are still supported by the context.
+- Add new insights from any new context that was not available before.
+- If new information contradicts your previous analysis, update and briefly explain why.
+- Do NOT reduce detail or lose information from the previous version unless it was wrong.
+"""
+
+
+def get_section_prompt(section_key, vertical, previous_data=None, other_sections=None):
+    """Return a focused system prompt for generating a single intelligence section."""
+    base = f"You are a senior process analyst at BetterPlace Group's AI Labs. Analyze all available context for {vertical.name} ({vertical.geography} -- {vertical.type}).\n\n{vertical.seed_context}\n\n"
+    incremental = _incremental_preamble(previous_data)
+
+    if section_key == 'businessProfile':
+        return base + incremental + """Produce the BUSINESS PROFILE section. Return ONLY valid JSON (no markdown, no backticks):
+
+{
+  "whatTheyDo": "2-3 sentence description or null",
+  "businessModel": "How they make money or null",
+  "geography": "Where they operate or null",
+  "scale": {
+    "workerNetwork": "Size or null",
+    "clientCount": "Number or null",
+    "monthlyVolume": "Tasks/hires/shifts per month or null"
+  },
+  "keyClients": ["Client names"] or null,
+  "teamSize": "Headcount and structure or null",
+  "primaryLanguages": ["Languages"] or null,
+  "communicationChannels": ["Channels"] or null
+}
+
+Be specific — use actual names, numbers, and details from the context. Set null for anything not mentioned."""
+
+    elif section_key == 'businessModelCanvas':
+        return base + incremental + """Produce the BUSINESS MODEL CANVAS section. Return ONLY valid JSON (no markdown, no backticks):
+
+{
+  "valueProposition": {
+    "toClients": "What clients pay for — the core promise, or null",
+    "toWorkers": "What workers/candidates/end users get, or null"
+  },
+  "revenueModel": {
+    "pricingMechanism": "How pricing works or null",
+    "averageTicketSize": "Typical deal size or null",
+    "paymentTerms": "When clients pay or null",
+    "marginStructure": "Where margin comes from and where it leaks or null"
+  },
+  "keyActivities": [
+    {
+      "activity": "Activity name",
+      "category": "supply_acquisition|demand_fulfillment|operations|compliance|support",
+      "peopleInvolved": "How many people and which roles, or null",
+      "timePerWeek": "Estimated hours per week or null",
+      "costIntensity": "low|medium|high",
+      "automationReady": "low|medium|high",
+      "whyItMatters": "Why this activity is critical"
+    }
+  ],
+  "keyResources": {
+    "people": "Team description or null",
+    "technology": "Systems, apps, platforms or null",
+    "data": "What unique data they have that could power AI or null",
+    "relationships": "Key client or partner relationships or null"
+  },
+  "costStructure": {
+    "biggestCostDrivers": ["Top 3-4 cost items"],
+    "fixedVsVariable": "Mostly fixed or variable or null",
+    "unitEconomics": "Revenue minus cost per unit, if known, or null"
+  },
+  "competitivePosition": {
+    "competitors": ["Known competitors"] or null,
+    "defensibility": "What makes them hard to replace or null",
+    "vulnerability": "Where they could lose to competition or disruption or null"
+  }
+}
+
+Analyze this as a BUSINESS, not just a process. Map how value flows through the business. For each key activity, estimate cost intensity (how much ops budget it consumes) and automation readiness (how suitable for AI). If this is a software business, adapt: clients = enterprise buyers, workers = end users, key activities = product development + sales + implementation."""
+
+    elif section_key == 'serviceBlueprint':
+        return base + incremental + f"""Produce the SERVICE BLUEPRINT section. Return ONLY valid JSON (no markdown, no backticks):
+
+{{
+  "processName": "Name of the core journey",
+  "costSummary": {{
+    "estimatedTotalMonthlyCost": "Approx total monthly ops cost string or null",
+    "highestCostStages": ["Stage name — cost string"],
+    "potentialSavings": "Estimated savings range from automation or null"
+  }},
+  "stages": [
+    {{
+      "stageName": "Stage name",
+      "customerJourney": {{
+        "action": "What the client/customer experiences",
+        "goal": "Why they do it or null"
+      }},
+      "workerJourney": {{
+        "action": "What the worker/candidate/end user does",
+        "friction": "Where they struggle or wait, or null"
+      }},
+      "opsTeamWork": {{
+        "action": "What the ops team does",
+        "owner": "Role/team",
+        "teamSize": "Number of people or null",
+        "hoursPerDay": "Hours spent per day per person or null",
+        "toolsUsed": ["Tools"],
+        "isManual": true,
+        "painPoint": "What's frustrating or null",
+        "costEstimate": {{
+          "monthlyHours": "Total person-hours per month or null",
+          "estimatedMonthlyCost": "Formatted monthly cost or null",
+          "costBasis": "Math behind the estimate or null",
+          "confidence": "high|medium|low"
+        }}
+      }},
+      "automationOpportunity": {{
+        "readiness": "low|medium|high",
+        "idea": "How AI could help or null",
+        "expectedImpact": "Expected impact or null"
+      }},
+      "validationQuestions": ["Specific questions to verify this stage"]
+    }}
+  ]
+}}
+
+{_COST_ESTIMATION_INSTRUCTIONS}"""
+
+    elif section_key == 'processMap':
+        return base + incremental + """Produce the PROCESS MAP section. Return ONLY valid JSON (no markdown, no backticks):
+
+{
+  "processName": "Name of the core process",
+  "steps": [
+    {
+      "stepNumber": 1,
+      "name": "Step name",
+      "description": "Detailed description",
+      "owner": "Who does this",
+      "teamSize": "How many people involved or null",
+      "toolsUsed": ["Tools used"],
+      "estimatedTime": "How long or null",
+      "volume": "How often or null",
+      "painLevel": "low|medium|high",
+      "painDescription": "What makes this painful or null",
+      "automationPotential": "low|medium|high",
+      "automationIdea": "How AI could help or null",
+      "confidence": "high|medium|low",
+      "notes": "Additional context or null"
+    }
+  ]
+}
+
+Map the end-to-end operational process. Be specific with names, volumes, and time estimates from the context. Set confidence to 'low' for any step you are inferring rather than being directly told about."""
+
+    elif section_key == 'teamStructure':
+        return base + incremental + """Produce the TEAM STRUCTURE section. Return ONLY valid JSON (no markdown, no backticks):
+
+[
+  {
+    "role": "Role name",
+    "headcount": "Number or null",
+    "responsibilities": "Key responsibilities",
+    "processSteps": ["Which process steps they own"]
+  }
+]
+
+Extract every role mentioned. Preserve exact headcounts and team sizes. If reporting lines are mentioned, note them in responsibilities."""
+
+    elif section_key == 'toolsInventory':
+        return base + incremental + """Produce the TOOLS & SYSTEMS INVENTORY section. Return ONLY valid JSON (no markdown, no backticks):
+
+[
+  {
+    "name": "Tool name",
+    "type": "Tool type (CRM, spreadsheet, mobile app, communication, etc.)",
+    "usedIn": ["Process steps where used"],
+    "usedBy": "Role/team that uses it"
+  }
+]
+
+Include every tool, app, platform, spreadsheet, and communication channel mentioned. Include informal tools like WhatsApp groups or shared Google Sheets."""
+
+    elif section_key == 'painPoints':
+        return base + incremental + """Produce the PAIN POINTS section. Return ONLY valid JSON (no markdown, no backticks):
+
+[
+  {
+    "severity": "high|medium|low",
+    "title": "Pain point title",
+    "currentEffort": "Time/money/people spent or null",
+    "affectedProcess": "Which process step or null",
+    "automationIdea": "How AI could help",
+    "expectedImpact": "What improvement to expect"
+  }
+]
+
+Only include pain points actually mentioned or strongly implied in the context. Rank by severity. Include cost impact wherever possible."""
+
+    elif section_key == 'knowledgeGaps':
+        other_summary = ""
+        if other_sections:
+            other_summary = "\n\nSECTIONS ALREADY ANALYZED:\n"
+            for k, v in other_sections.items():
+                if v:
+                    other_summary += f"\n--- {SECTION_LABELS.get(k, k)} ---\n{json.dumps(v, indent=1, default=str)[:1500]}\n"
+
+        return base + incremental + f"""Produce the KNOWLEDGE GAPS section. Return ONLY valid JSON (no markdown, no backticks):
+
+["Specific question about what is still missing"]
+
+Generate 5-15 specific, actionable questions about information that is MISSING and would be needed to design AI automation agents. Consider what has already been covered and what remains unknown.
+{other_summary}
+
+Focus on gaps that would block automation design: missing process details, unknown volumes, unclear decision criteria, undocumented exceptions, missing cost data, unknown integration points."""
+
+    elif section_key == 'automationReadiness':
+        other_summary = ""
+        if other_sections:
+            other_summary = "\n\nALL SECTIONS ANALYZED SO FAR:\n"
+            for k, v in other_sections.items():
+                if v:
+                    other_summary += f"\n--- {SECTION_LABELS.get(k, k)} ---\n{json.dumps(v, indent=1, default=str)[:2000]}\n"
+
+        return base + incremental + f"""Produce the AUTOMATION READINESS SCORECARD. Return ONLY valid JSON (no markdown, no backticks):
+
+{{
+  "overallScore": 72,
+  "contextCompleteness": {{
+    "score": 65,
+    "detail": "Coverage summary"
+  }},
+  "processClarity": {{
+    "score": 80,
+    "detail": "Process clarity summary"
+  }},
+  "dataAvailability": {{
+    "score": 60,
+    "detail": "Data availability summary"
+  }},
+  "teamReadiness": {{
+    "score": 75,
+    "detail": "Team readiness summary"
+  }},
+  "topAutomationCandidates": [
+    {{
+      "process": "What to automate",
+      "currentMonthlyCost": "Current cost string or null",
+      "automationType": "Type of AI agent/system",
+      "estimatedSavings": "Savings estimate or null",
+      "prerequisite": "What we need before building",
+      "timeToImplement": "Estimated time",
+      "priority": 1
+    }}
+  ],
+  "blockers": ["What is preventing automation today"],
+  "recommendedNextSteps": ["Specific next actions to move forward"]
+}}
+
+Rate on 4 dimensions (0-100): Context Completeness, Process Clarity, Data Availability, Team Readiness.
+Overall = weighted average (context 30%, process 30%, data 25%, readiness 15%).
+Rank top automation candidates by (monthly cost x feasibility). Be realistic about blockers.
+{other_summary}"""
+
+    return base + "Return ONLY valid JSON."
+
+
+def _compute_context_coverage_section(vertical_id):
+    """Programmatically compute context coverage — no Claude call needed."""
+    coverage_data = compute_discovery_coverage(vertical_id)
+    if not coverage_data:
+        return None
+    total = sum(c['percentage'] for c in coverage_data)
+    overall = int(total / len(coverage_data)) if coverage_data else 0
+    return {
+        "overall": overall,
+        "topics": [
+            {
+                "name": c['phase'],
+                "percentage": c['percentage'],
+                "captured": c['percentage'] > 25,
+                "status": c['status'],
+                "detail": c.get('detail', '')
+            }
+            for c in coverage_data
+        ]
+    }
+
+
+def _enrich_context_for_section(full_context, vertical_id, section_key):
+    """Append feedback and validated facts relevant to a section."""
+    enriched = full_context
+
+    feedback_entries = IntelligenceFeedback.query.filter_by(vertical_id=vertical_id).all()
+    section_feedback = [fb for fb in feedback_entries if fb.section == section_key or fb.section == 'general']
+    if section_feedback:
+        enriched += "\n\n--- USER CORRECTIONS/FEEDBACK ---"
+        for fb in section_feedback:
+            enriched += f"\n[{fb.feedback_type}] {fb.field_path or 'general'}: "
+            if fb.corrected_value:
+                enriched += f"Corrected to: {fb.corrected_value}"
+            if fb.comment:
+                enriched += f" Comment: {fb.comment}"
+
+    validated_facts = build_validated_facts(vertical_id)
+    if validated_facts:
+        enriched += "\n\n--- VALIDATED FACTS ---"
+        for fact in validated_facts:
+            enriched += f"\n- {fact}"
+
+    return enriched
 
 
 @retry(
@@ -868,71 +1276,206 @@ Then list the top automation candidates ranked by monthly cost × automation fea
     retry=retry_if_exception(is_rate_limit_error),
     reraise=True
 )
-def generate_intelligence(vertical_id, user_id, force=False):
-    vertical = Vertical.query.get(vertical_id)
-    if not vertical:
-        return None
+def generate_single_section(vertical, section_key, full_context, previous_data=None, other_sections=None):
+    """Generate a single intelligence section via a focused Claude call."""
+    system_prompt = get_section_prompt(section_key, vertical, previous_data, other_sections)
+    context = _enrich_context_for_section(full_context, vertical.id, section_key)
 
-    current_hash = compute_context_hash(vertical_id)
-
-    if not force:
-        cached = VerticalIntelligence.query.filter_by(
-            vertical_id=vertical_id
-        ).order_by(VerticalIntelligence.generated_at.desc()).first()
-        if cached and cached.context_hash == current_hash:
-            return cached
-
-    full_context, msg_count, doc_count, note_count = gather_all_context(vertical_id)
-
-    if not full_context.strip():
-        return None
-
-    feedback_entries = IntelligenceFeedback.query.filter_by(vertical_id=vertical_id).all()
-    if feedback_entries:
-        full_context += "\n\n--- USER CORRECTIONS/FEEDBACK ---"
-        for fb in feedback_entries:
-            full_context += f"\n[{fb.section}] [{fb.feedback_type}] {fb.field_path or 'general'}: "
-            if fb.corrected_value:
-                full_context += f"Corrected to: {fb.corrected_value}"
-            if fb.comment:
-                full_context += f" Comment: {fb.comment}"
-
-    validated_facts = build_validated_facts(vertical_id)
-    if validated_facts:
-        full_context += "\n\n--- VALIDATED FACTS ---"
-        for fact in validated_facts:
-            full_context += f"\n- {fact}"
-
-    discovery_coverage = compute_discovery_coverage(vertical_id)
-    if discovery_coverage:
-        full_context += "\n\n--- DISCOVERY COVERAGE HEURISTIC ---"
-        for item in discovery_coverage:
-            full_context += f"\n- {item['phase']}: {item['status']} ({item['percentage']}%)"
-
-    system_prompt = get_intelligence_prompt(vertical)
+    max_context = 150000
+    if len(context) > max_context:
+        context = context[:max_context] + "\n\n[Context truncated due to size]"
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=8192,
+        max_tokens=SECTION_MAX_TOKENS.get(section_key, 2000),
         system=system_prompt,
         messages=[{
             "role": "user",
-            "content": f"CONTEXT PROVIDED:\n\n{full_context}\n\nProduce the comprehensive intelligence report."
+            "content": f"CONTEXT:\n\n{context}\n\nProduce the {SECTION_LABELS.get(section_key, section_key)} analysis."
         }]
     )
 
-    result_text = response.content[0].text
+    result_text = clean_json_response(response.content[0].text)
+    try:
+        return json.loads(result_text)
+    except (json.JSONDecodeError, TypeError):
+        print(f"Failed to parse {section_key} section JSON, returning raw text")
+        return result_text
 
-    intelligence = VerticalIntelligence(
+
+def _upsert_section(vertical_id, section_key, section_data, context_hash, user_id):
+    """Insert or update an IntelligenceSection row."""
+    existing = IntelligenceSection.query.filter_by(
+        vertical_id=vertical_id, section_key=section_key
+    ).first()
+
+    data_str = json.dumps(section_data, default=str) if not isinstance(section_data, str) else section_data
+
+    if existing:
+        existing.section_data = data_str
+        existing.context_hash = context_hash
+        existing.version = (existing.version or 0) + 1
+        existing.generated_at = datetime.utcnow()
+        existing.generated_by = user_id
+    else:
+        existing = IntelligenceSection(
+            vertical_id=vertical_id,
+            section_key=section_key,
+            section_data=data_str,
+            context_hash=context_hash,
+            version=1,
+            generated_by=user_id,
+        )
+        db.session.add(existing)
+
+    db.session.commit()
+    return existing
+
+
+def assemble_composite_intelligence(vertical_id, user_id, context_hash):
+    """Merge all IntelligenceSection rows into a single VerticalIntelligence record."""
+    sections = IntelligenceSection.query.filter_by(vertical_id=vertical_id).all()
+    composite = {}
+    for sec in sections:
+        if sec.section_data:
+            try:
+                composite[sec.section_key] = json.loads(sec.section_data)
+            except (json.JSONDecodeError, TypeError):
+                composite[sec.section_key] = sec.section_data
+
+    intel = VerticalIntelligence(
         vertical_id=vertical_id,
-        intelligence_data=result_text,
-        context_hash=current_hash,
+        intelligence_data=json.dumps(composite, default=str),
+        context_hash=context_hash,
         generated_by=user_id,
     )
-    db.session.add(intelligence)
+    db.session.add(intel)
     db.session.commit()
+    return intel
 
-    return intelligence
+
+def generate_intelligence_sections_background(app, vertical_id, user_id, force=False, sections=None):
+    """Generate intelligence section-by-section in a background thread."""
+    _intel_generation_status[vertical_id] = {
+        "status": "generating",
+        "error": None,
+        "sections_total": len(sections or INTELLIGENCE_SECTION_ORDER),
+        "sections_completed": 0,
+        "current_section": None,
+        "completed_sections": [],
+        "started_at": datetime.utcnow().isoformat(),
+    }
+
+    with app.app_context():
+        try:
+            vertical = Vertical.query.get(vertical_id)
+            if not vertical:
+                _intel_generation_status[vertical_id] = {"status": "failed", "error": "Vertical not found"}
+                return
+
+            current_hash = compute_context_hash(vertical_id)
+            full_context, msg_count, doc_count, note_count = gather_all_context(vertical_id)
+
+            if not full_context.strip():
+                _intel_generation_status[vertical_id] = {"status": "failed", "error": "No context available"}
+                return
+
+            sections_to_gen = sections or list(INTELLIGENCE_SECTION_ORDER)
+            completed = {}
+
+            # Load existing sections that we are NOT regenerating (for synthesis inputs)
+            all_existing = {s.section_key: s for s in IntelligenceSection.query.filter_by(vertical_id=vertical_id).all()}
+            for key in INTELLIGENCE_SECTION_ORDER:
+                if key not in sections_to_gen and key in all_existing and all_existing[key].section_data:
+                    try:
+                        completed[key] = json.loads(all_existing[key].section_data)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+            for section_key in sections_to_gen:
+                _intel_generation_status[vertical_id]["current_section"] = section_key
+
+                # contextCoverage is computed, not generated by Claude
+                if section_key in COMPUTED_SECTIONS:
+                    result = _compute_context_coverage_section(vertical_id)
+                    if result:
+                        _upsert_section(vertical_id, section_key, result, current_hash, user_id)
+                        completed[section_key] = result
+                    _intel_generation_status[vertical_id]["sections_completed"] += 1
+                    _intel_generation_status[vertical_id]["completed_sections"].append(section_key)
+                    continue
+
+                # Load previous version for incremental updates
+                prev_data = None
+                if section_key in all_existing and all_existing[section_key].section_data:
+                    try:
+                        prev_data = json.loads(all_existing[section_key].section_data)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # Skip if hash matches and not forced
+                if not force and prev_data and section_key in all_existing:
+                    if all_existing[section_key].context_hash == current_hash:
+                        completed[section_key] = prev_data
+                        _intel_generation_status[vertical_id]["sections_completed"] += 1
+                        _intel_generation_status[vertical_id]["completed_sections"].append(section_key)
+                        continue
+
+                # Synthesis sections get other sections as input
+                other = completed if section_key in SYNTHESIS_SECTIONS else None
+
+                result = generate_single_section(vertical, section_key, full_context, prev_data, other)
+                if result:
+                    _upsert_section(vertical_id, section_key, result, current_hash, user_id)
+                    completed[section_key] = result
+
+                _intel_generation_status[vertical_id]["sections_completed"] += 1
+                _intel_generation_status[vertical_id]["completed_sections"].append(section_key)
+
+            # Assemble composite
+            assemble_composite_intelligence(vertical_id, user_id, current_hash)
+            _intel_generation_status[vertical_id]["status"] = "done"
+            _intel_generation_status[vertical_id]["current_section"] = None
+
+        except Exception as e:
+            print(f"Intelligence generation error for {vertical_id}: {e}")
+            _intel_generation_status[vertical_id] = {"status": "failed", "error": str(e)}
+
+
+def start_intelligence_generation(app, vertical_id, user_id, force=True, sections=None):
+    """Start async per-section intelligence generation — returns immediately."""
+    thread = threading.Thread(
+        target=generate_intelligence_sections_background,
+        args=(app, vertical_id, user_id, force, sections)
+    )
+    thread.daemon = True
+    thread.start()
+
+
+# Incremental intelligence after new context arrives
+_last_incremental_trigger = {}
+INCREMENTAL_COOLDOWN_SECONDS = 60
+
+
+def start_incremental_intelligence(app, vertical_id, user_id=None):
+    """Trigger incremental intelligence update if prior intelligence exists and cooldown has passed."""
+    import time
+    now = time.time()
+    last = _last_incremental_trigger.get(vertical_id, 0)
+    if now - last < INCREMENTAL_COOLDOWN_SECONDS:
+        return False
+
+    status = _intel_generation_status.get(vertical_id, {})
+    if status.get("status") == "generating":
+        return False
+
+    has_prior = IntelligenceSection.query.filter_by(vertical_id=vertical_id).first()
+    if not has_prior:
+        return False
+
+    _last_incremental_trigger[vertical_id] = now
+    start_intelligence_generation(app, vertical_id, user_id, force=False, sections=None)
+    return True
 
 
 @retry(

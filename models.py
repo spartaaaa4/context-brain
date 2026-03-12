@@ -55,6 +55,7 @@ class Document(db.Model):
     doc_type = db.Column(db.Text)
     user_description = db.Column(db.Text)
     extracted_content = db.Column(db.Text)
+    full_text = db.Column(db.Text)
     processing_status = db.Column(db.Text, default='pending')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -131,6 +132,25 @@ class UserVerticalRole(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('user_id', 'vertical_id', name='uq_user_vertical'),
+    )
+
+
+class IntelligenceSection(db.Model):
+    __tablename__ = 'intelligence_sections'
+    id = db.Column(db.Integer, primary_key=True)
+    vertical_id = db.Column(db.Text, db.ForeignKey('verticals.id'), nullable=False)
+    section_key = db.Column(db.Text, nullable=False)
+    section_data = db.Column(db.Text)
+    context_hash = db.Column(db.Text)
+    version = db.Column(db.Integer, default=1)
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    generated_by = db.Column(db.Text, db.ForeignKey('users.id'))
+
+    vertical = db.relationship('Vertical', backref='intelligence_sections')
+    user = db.relationship('User', backref='intelligence_sections')
+
+    __table_args__ = (
+        db.UniqueConstraint('vertical_id', 'section_key', name='uq_vertical_section'),
     )
 
 

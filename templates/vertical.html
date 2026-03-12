@@ -39,15 +39,13 @@
             <div id="chat-intel-banner" class="chat-intel-banner" style="display:none"></div>
             <div class="chat-messages" id="chat-messages">
                 <div class="chat-empty">
-                    <p>No messages yet. Start the conversation with the AI Process Analyst.</p>
+                    <div class="chat-empty-inner">
+                        <div class="chat-empty-icon">🧠</div>
+                        <h3>Start a discovery conversation</h3>
+                        <p>Pick a topic below and the AI analyst will interview you about it, or just type your own message.</p>
+                    </div>
+                    <div class="topic-prompts-grid" id="topic-prompts-grid"></div>
                 </div>
-            </div>
-            <div class="chat-topic-prompts" id="chat-topic-prompts">
-                <div class="topic-prompts-header">
-                    <span class="topic-prompts-title">What would you like to discuss?</span>
-                    <button class="topic-prompts-toggle" id="topic-prompts-toggle" title="Collapse topics">▼</button>
-                </div>
-                <div class="topic-prompts-grid" id="topic-prompts-grid"></div>
             </div>
             <div class="chat-input-area">
                 <div class="typing-indicator" id="typing-indicator" style="display:none">

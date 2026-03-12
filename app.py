@@ -3,7 +3,7 @@ import random
 import logging
 from flask import Flask, jsonify
 from flask_login import LoginManager
-from models import db, User, Vertical, UserVerticalRole
+from models import db, User, Vertical
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -127,6 +127,7 @@ def init_db():
             conn.execute(db.text("SET lock_timeout = '3s'"))
             try:
                 conn.execute(db.text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data TEXT"))
+                conn.execute(db.text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS full_text TEXT"))
                 conn.execute(db.text("ALTER TABLE users ADD COLUMN IF NOT EXISTS pin TEXT"))
                 conn.commit()
             except Exception:

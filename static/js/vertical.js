@@ -15,12 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
         loadChatHistory();
         loadChatIntelBanner();
     }
-    if (document.getElementById('dropzone')) {
-        initDocuments();
-    }
-    if (document.getElementById('add-note-btn')) {
-        initNotes();
-    }
+    if (document.getElementById('dropzone')) initDocuments();
+    if (document.getElementById('add-note-btn')) initNotes();
     loadDocuments();
     loadNotes();
 });
@@ -60,25 +56,24 @@ function initIntelSubtabs() {
 
 // ---- Topic Prompt Boxes ----
 const TOPIC_PROMPTS = [
-    { label: 'Worker / User Process', icon: '🔄', prompt: 'Walk me through the end-to-end process when a new worker/candidate enters your system' },
-    { label: 'Client Process', icon: '🤝', prompt: 'How does a new client request come in, and what happens from intake to fulfillment?' },
-    { label: 'Team Structure', icon: '👥', prompt: 'Tell me about your ops team — roles, headcount, who reports to whom' },
-    { label: 'ICP & Target Market', icon: '🎯', prompt: 'Who is your ideal client? What industries, company sizes, and geographies do you target?' },
-    { label: 'Business Model', icon: '💰', prompt: 'How does your pricing work? Per worker, per task, per month? What are your margins?' },
-    { label: 'Industries Served', icon: '🏭', prompt: 'Which industries do you serve most? Are there differences in how you operate across them?' },
-    { label: 'Tools & Systems', icon: '🛠️', prompt: 'What apps, platforms, spreadsheets, and communication tools does your team use daily?' },
-    { label: 'Pain Points', icon: '🔥', prompt: 'What are the top 3 things that frustrate your ops team or waste the most time?' },
-    { label: 'Compliance', icon: '📜', prompt: 'What regulatory or compliance requirements affect your operations?' },
-    { label: 'Payment & Payroll', icon: '💸', prompt: 'How and when do workers get paid? Walk me through the payroll cycle' },
+    { label: 'Worker / User Process', icon: '🔄', instruction: 'I want to discuss the worker/user process. Please interview me about how workers or candidates enter our system, step by step. Start by asking me your first question.' },
+    { label: 'Client Process', icon: '🤝', instruction: 'I want to discuss our client process. Please interview me about how client requests come in and how we fulfill them. Ask me structured questions one at a time.' },
+    { label: 'Team Structure', icon: '👥', instruction: 'I want to discuss our team structure. Please interview me about our ops team — roles, headcount, reporting lines. Start asking me questions.' },
+    { label: 'ICP & Target Market', icon: '🎯', instruction: 'I want to discuss our ideal client profile and target market. Interview me about the industries, company sizes, and geographies we target. Ask me questions.' },
+    { label: 'Business Model', icon: '💰', instruction: 'I want to discuss our business model. Interview me about pricing, revenue model, margins, and unit economics. Ask me structured questions.' },
+    { label: 'Industries Served', icon: '🏭', instruction: 'I want to discuss the industries we serve. Interview me about which industries, how operations differ across them, and key patterns. Ask me questions.' },
+    { label: 'Tools & Systems', icon: '🛠️', instruction: 'I want to discuss our tools and systems. Interview me about what apps, platforms, spreadsheets, and communication tools our team uses. Ask me questions.' },
+    { label: 'Pain Points', icon: '🔥', instruction: 'I want to discuss our pain points. Interview me about what frustrates the ops team most, where time is wasted, where errors happen. Ask me structured questions.' },
+    { label: 'Compliance', icon: '📜', instruction: 'I want to discuss compliance and regulations. Interview me about regulatory requirements that affect our operations. Ask me questions.' },
+    { label: 'Payment & Payroll', icon: '💸', instruction: 'I want to discuss payment and payroll. Interview me about how and when workers get paid, the payroll cycle, exceptions, and tools used. Ask me questions.' },
 ];
 
 function initTopicPrompts() {
     const grid = document.getElementById('topic-prompts-grid');
-    const toggle = document.getElementById('topic-prompts-toggle');
-    if (!grid || !toggle) return;
+    if (!grid) return;
 
     grid.innerHTML = TOPIC_PROMPTS.map(t => `
-        <button class="topic-prompt-card" data-prompt="${escapeHtml(t.prompt)}">
+        <button class="topic-prompt-card" data-instruction="${escapeHtml(t.instruction)}">
             <span class="topic-prompt-icon">${t.icon}</span>
             <span class="topic-prompt-label">${t.label}</span>
         </button>
@@ -86,24 +81,48 @@ function initTopicPrompts() {
 
     grid.querySelectorAll('.topic-prompt-card').forEach(card => {
         card.addEventListener('click', () => {
-            const input = document.getElementById('chat-input');
-            input.value = card.dataset.prompt;
-            input.focus();
+            const instruction = card.dataset.instruction;
+            sendTopicMessage(instruction, card.querySelector('.topic-prompt-label').textContent);
         });
     });
+}
 
-    const storageKey = `cb_topics_collapsed_${VERTICAL_ID}`;
-    const collapsed = localStorage.getItem(storageKey) === '1';
-    if (collapsed) {
-        grid.style.display = 'none';
-        toggle.textContent = '▶';
-    }
-    toggle.addEventListener('click', () => {
-        const isHidden = grid.style.display === 'none';
-        grid.style.display = isHidden ? '' : 'none';
-        toggle.textContent = isHidden ? '▼' : '▶';
-        localStorage.setItem(storageKey, isHidden ? '0' : '1');
+async function sendTopicMessage(instruction, topicLabel) {
+    const chatMessages = document.getElementById('chat-messages');
+    const empty = chatMessages.querySelector('.chat-empty');
+    if (empty) empty.remove();
+
+    appendMessage({
+        role: 'user',
+        content: `Let's talk about: ${topicLabel}`,
+        user_name: 'You',
+        created_at: new Date().toISOString()
     });
+
+    document.getElementById('typing-indicator').style.display = 'flex';
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    document.getElementById('send-btn').disabled = true;
+
+    try {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ verticalId: VERTICAL_ID, message: instruction })
+        });
+        document.getElementById('typing-indicator').style.display = 'none';
+        if (!res.ok) {
+            appendSystemMessage('Failed to start topic. Please try again.');
+            return;
+        }
+        const data = await res.json();
+        appendMessage({ role: 'assistant', content: data.response, created_at: new Date().toISOString() });
+    } catch (e) {
+        document.getElementById('typing-indicator').style.display = 'none';
+        appendSystemMessage('Network error. Please try again.');
+    } finally {
+        document.getElementById('send-btn').disabled = false;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
 }
 
 // ---- Chat Intelligence Banner ----
@@ -325,13 +344,15 @@ function initVoice() {
     };
 }
 
-async function sendMessage() {
+async function sendMessage(overrideMessage) {
     const input = document.getElementById('chat-input');
-    const message = input.value.trim();
+    const message = overrideMessage || input.value.trim();
     if (!message) return;
 
-    input.value = '';
-    input.style.height = 'auto';
+    if (!overrideMessage) {
+        input.value = '';
+        input.style.height = 'auto';
+    }
     document.getElementById('send-btn').disabled = true;
 
     const chatMessages = document.getElementById('chat-messages');
@@ -379,10 +400,78 @@ async function sendMessage() {
     }
 }
 
+function parseMCQBlocks(text) {
+    const mcqRegex = /\[MCQ(?::multi)?\]([\s\S]*?)\[\/MCQ\]/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = mcqRegex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            parts.push({ type: 'text', content: text.slice(lastIndex, match.index).trim() });
+        }
+        const isMulti = match[0].startsWith('[MCQ:multi]');
+        const optionLines = match[1].trim().split('\n').filter(l => l.trim());
+        const question = optionLines[0].replace(/^\*\*|\*\*$/g, '').replace(/^Q:\s*/i, '').trim();
+        const options = optionLines.slice(1).map(line => {
+            return line.replace(/^[-•*]\s*/, '').replace(/^\d+[\.\)]\s*/, '').trim();
+        }).filter(Boolean);
+        parts.push({ type: 'mcq', question, options, multi: isMulti });
+        lastIndex = mcqRegex.lastIndex;
+    }
+
+    if (lastIndex < text.length) {
+        const remaining = text.slice(lastIndex).trim();
+        if (remaining) parts.push({ type: 'text', content: remaining });
+    }
+
+    return parts.length ? parts : [{ type: 'text', content: text }];
+}
+
+function renderMCQCard(mcq, msgId) {
+    const cardId = `mcq-${msgId}-${Math.random().toString(36).slice(2, 8)}`;
+    const optionsHtml = mcq.options.map((opt, i) => `
+        <button class="mcq-option" data-card="${cardId}" data-idx="${i}" onclick="handleMCQClick(this, ${mcq.multi ? 'true' : 'false'})">${escapeHtml(opt)}</button>
+    `).join('');
+
+    return `
+        <div class="mcq-card" id="${cardId}" data-multi="${mcq.multi}">
+            <div class="mcq-question">${escapeHtml(mcq.question)}</div>
+            <div class="mcq-options">${optionsHtml}</div>
+            ${mcq.multi ? `<button class="mcq-submit" onclick="submitMCQ('${cardId}')">Submit Selection</button>` : ''}
+        </div>
+    `;
+}
+
+window.handleMCQClick = function(btn, isMulti) {
+    if (btn.closest('.mcq-card').classList.contains('mcq-answered')) return;
+
+    if (isMulti) {
+        btn.classList.toggle('selected');
+    } else {
+        const card = btn.closest('.mcq-card');
+        card.classList.add('mcq-answered');
+        card.querySelectorAll('.mcq-option').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        const answer = btn.textContent.trim();
+        sendMessage(answer);
+    }
+};
+
+window.submitMCQ = function(cardId) {
+    const card = document.getElementById(cardId);
+    if (!card || card.classList.contains('mcq-answered')) return;
+    const selected = Array.from(card.querySelectorAll('.mcq-option.selected')).map(b => b.textContent.trim());
+    if (!selected.length) return;
+    card.classList.add('mcq-answered');
+    sendMessage(selected.join(', '));
+};
+
 function appendMessage(msg) {
     const chatMessages = document.getElementById('chat-messages');
     const div = document.createElement('div');
     div.className = `message ${msg.role}`;
+    const msgId = Date.now();
 
     const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const name = msg.role === 'user' ? (msg.user_name || 'You') : 'AI Analyst';
@@ -391,9 +480,20 @@ function appendMessage(msg) {
     if (msg.role === 'user') {
         avatar = msg.user_pic
             ? `<img src="${msg.user_pic}" class="msg-avatar">`
-            : `<div class="msg-avatar-ai" style="background: ${VERTICAL_COLOR}22; color: ${VERTICAL_COLOR}">${name[0]}</div>`;
+            : `<div class="msg-avatar-initial" style="background: ${VERTICAL_COLOR}">${name[0]}</div>`;
     } else {
         avatar = '<div class="msg-avatar-ai">🧠</div>';
+    }
+
+    let bubbleContent = '';
+    if (msg.role === 'assistant') {
+        const parts = parseMCQBlocks(msg.content);
+        bubbleContent = parts.map(part => {
+            if (part.type === 'mcq') return renderMCQCard(part, msgId);
+            return `<div class="msg-text">${escapeHtml(part.content)}</div>`;
+        }).join('');
+    } else {
+        bubbleContent = escapeHtml(msg.content);
     }
 
     div.innerHTML = `
@@ -403,7 +503,7 @@ function appendMessage(msg) {
                 <span class="msg-name">${name}</span>
                 <span class="msg-time">${time}</span>
             </div>
-            <div class="msg-bubble" style="${msg.role === 'user' ? `background: ${VERTICAL_COLOR}` : ''}">${escapeHtml(msg.content)}</div>
+            <div class="msg-bubble ${msg.role}">${bubbleContent}</div>
         </div>
     `;
     chatMessages.appendChild(div);
@@ -426,7 +526,8 @@ async function loadChatHistory() {
         const chatMessages = document.getElementById('chat-messages');
         if (messages.length === 0) return;
 
-        chatMessages.innerHTML = '';
+        const empty = chatMessages.querySelector('.chat-empty');
+        if (empty) empty.remove();
         messages.forEach(msg => appendMessage(msg));
         chatMessages.scrollTop = chatMessages.scrollHeight;
     } catch (e) {
@@ -668,19 +769,37 @@ async function loadDocuments() {
             let extractedHtml = '';
             if (doc.processing_status === 'done' && doc.extracted_content) {
                 const ec = doc.extracted_content;
+                const roles = ec.rolesFound || (ec.organizationalInfo && ec.organizationalInfo.teamStructure || []).map(t => t.role).filter(Boolean);
+                const tools = ec.toolsFound || (ec.technologyStack || []).map(t => t.name).filter(Boolean);
+                const pains = ec.painPointsFound || (ec.painPointsAndChallenges || []).map(p => p.issue).filter(Boolean);
+                const facts = ec.keyFacts || [];
+                const numbers = (ec.specificNumbers || []).map(n => `${n.value} (${n.meaning})`);
+                const quotes = (ec.directQuotes || []).map(q => q.quote);
                 extractedHtml = `
                     <button class="doc-extracted-toggle" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                        View AI Summary
+                        View AI Analysis
                     </button>
                     <div class="doc-extracted" style="display:none">
                         <div class="doc-extracted-content">
                             ${ec.summary ? `<p><strong>Summary:</strong> ${escapeHtml(ec.summary)}</p>` : ''}
-                            ${ec.rolesFound && ec.rolesFound.length ? `<p><strong>Roles:</strong> ${ec.rolesFound.join(', ')}</p>` : ''}
-                            ${ec.toolsFound && ec.toolsFound.length ? `<p><strong>Tools:</strong> ${ec.toolsFound.join(', ')}</p>` : ''}
-                            ${ec.painPointsFound && ec.painPointsFound.length ? `<p><strong>Pain Points:</strong> ${ec.painPointsFound.join(', ')}</p>` : ''}
-                            ${ec.keyFacts && ec.keyFacts.length ? `<p><strong>Key Facts:</strong> ${ec.keyFacts.join(', ')}</p>` : ''}
+                            ${roles && roles.length ? `<p><strong>Roles:</strong> ${roles.map(r => escapeHtml(String(r))).join(', ')}</p>` : ''}
+                            ${tools && tools.length ? `<p><strong>Tools:</strong> ${tools.map(t => escapeHtml(String(t))).join(', ')}</p>` : ''}
+                            ${pains && pains.length ? `<p><strong>Pain Points:</strong> ${pains.map(p => escapeHtml(String(p))).join('; ')}</p>` : ''}
+                            ${facts && facts.length ? `<p><strong>Key Facts:</strong> ${facts.map(f => escapeHtml(String(f))).join('; ')}</p>` : ''}
+                            ${numbers && numbers.length ? `<p><strong>Key Numbers:</strong> ${numbers.map(n => escapeHtml(n)).join('; ')}</p>` : ''}
+                            ${quotes && quotes.length ? `<p><strong>Quotes:</strong> "${quotes.map(q => escapeHtml(q)).join('"; "')}"</p>` : ''}
                             ${ec.relevanceScore ? `<p><strong>Relevance:</strong> ${ec.relevanceScore}</p>` : ''}
                         </div>
+                    </div>
+                `;
+            }
+
+            let failedHtml = '';
+            if (doc.processing_status === 'failed') {
+                failedHtml = `
+                    <div class="doc-failed-bar">
+                        <span>Processing failed</span>
+                        <button class="doc-retry-btn" onclick="retryDocument(${doc.id})">Retry</button>
                     </div>
                 `;
             }
@@ -700,6 +819,7 @@ async function loadDocuments() {
                         <span>${new Date(doc.created_at).toLocaleDateString()}</span>
                     </div>
                     ${doc.user_description ? `<div class="doc-description">${escapeHtml(doc.user_description)}</div>` : ''}
+                    ${failedHtml}
                     ${extractedHtml}
                 </div>
             `;
@@ -711,6 +831,20 @@ async function loadDocuments() {
         document.getElementById('documents-list').innerHTML = '<div class="loading-state">Error loading documents</div>';
     }
 }
+
+window.retryDocument = async function(docId) {
+    try {
+        const res = await fetch(`/api/documents/${docId}/retry`, { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.json();
+            alert(err.error || 'Retry failed');
+            return;
+        }
+        loadDocuments();
+    } catch (e) {
+        alert('Failed to retry. Please try again.');
+    }
+};
 
 async function pollDocStatus(docId) {
     const check = async () => {
@@ -788,6 +922,59 @@ async function loadNotes() {
     }
 }
 
+let intelPollTimer = null;
+
+const SECTION_SUBTAB_MAP = {
+    businessProfile: 'profile',
+    businessModelCanvas: 'canvas',
+    serviceBlueprint: 'blueprint',
+    processMap: 'blueprint',
+    teamStructure: 'profile',
+    toolsInventory: 'tools',
+    painPoints: 'painpoints',
+    knowledgeGaps: 'gaps',
+    contextCoverage: 'coverage',
+    automationReadiness: 'coverage',
+};
+
+const SECTION_LABELS = {
+    businessProfile: 'Business Profile',
+    businessModelCanvas: 'Business Model Canvas',
+    serviceBlueprint: 'Service Blueprint',
+    processMap: 'Process Map',
+    teamStructure: 'Team Structure',
+    toolsInventory: 'Tools & Systems',
+    painPoints: 'Pain Points',
+    knowledgeGaps: 'Knowledge Gaps',
+    contextCoverage: 'Context Coverage',
+    automationReadiness: 'Automation Readiness',
+};
+
+function updateSubtabFreshness(sectionFreshness) {
+    if (!sectionFreshness) return;
+    document.querySelectorAll('.intel-subtab').forEach(btn => {
+        const subtabKey = btn.dataset.subtab;
+        btn.classList.remove('freshness-fresh', 'freshness-stale', 'freshness-empty');
+
+        const relevantSections = Object.entries(SECTION_SUBTAB_MAP)
+            .filter(([, st]) => st === subtabKey)
+            .map(([sk]) => sk);
+
+        let hasFresh = false, hasStale = false, hasAny = false;
+        for (const sk of relevantSections) {
+            if (sectionFreshness[sk]) {
+                hasAny = true;
+                if (sectionFreshness[sk].fresh) hasFresh = true;
+                else hasStale = true;
+            }
+        }
+
+        if (!hasAny) btn.classList.add('freshness-empty');
+        else if (hasStale) btn.classList.add('freshness-stale');
+        else if (hasFresh) btn.classList.add('freshness-fresh');
+    });
+}
+
 async function loadIntelligence() {
     const loading = document.getElementById('intel-loading');
     const content = document.getElementById('intel-content');
@@ -808,8 +995,9 @@ async function loadIntelligence() {
         }
         const data = await res.json();
 
-        // If there's cached intelligence, show it immediately
-        if (data.intelligence) {
+        updateSubtabFreshness(data.section_freshness);
+
+        if (data.intelligence && typeof data.intelligence === 'object') {
             intelligenceData = data.intelligence;
             loading.style.display = 'none';
             content.style.display = 'block';
@@ -819,31 +1007,36 @@ async function loadIntelligence() {
             return;
         }
 
-        // No cache but context exists → auto-generate (leader/admin only)
-        if (data.has_context && (USER_ROLE === 'admin' || USER_ROLE === 'leader')) {
-            loading.style.display = 'block';
-            loading.querySelector('p').textContent =
-                'Context found — generating intelligence report… (this may take 30–60 seconds)';
-
-            const genRes = await fetch(`/api/intelligence/${VERTICAL_ID}/refresh`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-
-            if (genRes.ok) {
-                const genData = await genRes.json();
-                intelligenceData = genData.intelligence;
-                loading.style.display = 'none';
+        if (data.generating) {
+            showIntelGenerating(data);
+            startIntelPoll();
+            if (data.partial_intelligence) {
                 content.style.display = 'block';
-                renderIntelligence(genData.intelligence);
-            } else {
+                renderIntelligence(data.partial_intelligence);
+            }
+            return;
+        }
+
+        if (data.has_context && (USER_ROLE === 'admin' || USER_ROLE === 'leader')) {
+            showIntelGenerating();
+            try {
+                const genRes = await fetch(`/api/intelligence/${VERTICAL_ID}/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (genRes.ok) {
+                    startIntelPoll();
+                } else {
+                    loading.style.display = 'none';
+                    empty.style.display = 'block';
+                }
+            } catch (e) {
                 loading.style.display = 'none';
                 empty.style.display = 'block';
             }
             return;
         }
 
-        // No context at all — show the empty / guidance state
         loading.style.display = 'none';
         empty.style.display = 'block';
     } catch (e) {
@@ -852,6 +1045,105 @@ async function loadIntelligence() {
         empty.style.display = 'block';
     }
 }
+
+function showIntelGenerating(statusData) {
+    const loading = document.getElementById('intel-loading');
+    const empty = document.getElementById('intel-empty');
+    loading.style.display = 'block';
+    empty.style.display = 'none';
+
+    if (statusData && statusData.sections_total) {
+        const completed = statusData.sections_completed || 0;
+        const total = statusData.sections_total || 10;
+        const current = statusData.current_section;
+        const currentLabel = current ? (SECTION_LABELS[current] || current) : '';
+        const pct = Math.round((completed / total) * 100);
+        loading.innerHTML = `
+            <div class="spinner"></div>
+            <p>Generating intelligence… ${completed}/${total} sections (${pct}%)</p>
+            ${currentLabel ? `<p class="intel-gen-current">Analyzing: ${currentLabel}</p>` : ''}
+            <div class="intel-gen-progress">
+                <div class="intel-gen-progress-bar" style="width: ${pct}%"></div>
+            </div>`;
+    } else {
+        loading.innerHTML = `
+            <div class="spinner"></div>
+            <p>Generating intelligence report… This may take 1-2 minutes (analyzing section by section).</p>
+            <div class="intel-gen-progress"><div class="intel-gen-progress-bar" style="width: 0%"></div></div>`;
+    }
+}
+
+function startIntelPoll() {
+    if (intelPollTimer) clearInterval(intelPollTimer);
+    let pollCount = 0;
+    intelPollTimer = setInterval(async () => {
+        pollCount++;
+        try {
+            const res = await fetch(`/api/intelligence/${VERTICAL_ID}/status`);
+            if (!res.ok) return;
+            const data = await res.json();
+
+            if (data.status === 'done' && data.intelligence && typeof data.intelligence === 'object') {
+                clearInterval(intelPollTimer);
+                intelPollTimer = null;
+                intelligenceData = data.intelligence;
+                document.getElementById('intel-loading').style.display = 'none';
+                document.getElementById('intel-content').style.display = 'block';
+                renderIntelligence(data.intelligence);
+                return;
+            }
+
+            if (data.status === 'failed') {
+                clearInterval(intelPollTimer);
+                intelPollTimer = null;
+                document.getElementById('intel-loading').style.display = 'none';
+                const empty = document.getElementById('intel-empty');
+                empty.style.display = 'block';
+                empty.querySelector('h3').textContent = 'Generation Failed';
+                empty.querySelector('p').textContent = data.error || 'Intelligence generation encountered an error. Please try again.';
+                return;
+            }
+
+            if (data.status === 'generating') {
+                showIntelGenerating(data);
+                // Render partial results as sections complete
+                if (data.partial_intelligence && Object.keys(data.partial_intelligence).length) {
+                    document.getElementById('intel-content').style.display = 'block';
+                    renderIntelligence(data.partial_intelligence);
+                }
+            }
+        } catch (e) {
+            // Network blip, keep polling
+        }
+
+        if (pollCount > 120) {
+            clearInterval(intelPollTimer);
+            intelPollTimer = null;
+            document.getElementById('intel-loading').style.display = 'none';
+            const empty = document.getElementById('intel-empty');
+            empty.style.display = 'block';
+            empty.querySelector('h3').textContent = 'Generation Timed Out';
+            empty.querySelector('p').textContent = 'Intelligence generation took too long. Please try again.';
+        }
+    }, 5000);
+}
+
+window.refreshSection = async function(sectionKey) {
+    try {
+        const res = await fetch(`/api/intelligence/${VERTICAL_ID}/refresh/${sectionKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (res.ok) {
+            startIntelPoll();
+        } else {
+            const err = await res.json();
+            alert(err.error || 'Failed to refresh section');
+        }
+    } catch (e) {
+        alert('Failed to refresh section');
+    }
+};
 
 window.regenerateProcessMap = async function() {
     const btn = document.querySelector('.intel-regen-map-btn');
@@ -866,15 +1158,9 @@ window.regenerateProcessMap = async function() {
 };
 
 window.refreshIntelligence = async function() {
-    const loading = document.getElementById('intel-loading');
-    const content = document.getElementById('intel-content');
-    const empty = document.getElementById('intel-empty');
     const stale = document.getElementById('intel-stale-banner');
-
-    loading.style.display = 'block';
-    content.style.display = 'none';
-    empty.style.display = 'none';
-    stale.style.display = 'none';
+    if (stale) stale.style.display = 'none';
+    showIntelGenerating({sections_total: 10, sections_completed: 0, current_section: null});
 
     try {
         const res = await fetch(`/api/intelligence/${VERTICAL_ID}/refresh`, {
@@ -884,34 +1170,29 @@ window.refreshIntelligence = async function() {
 
         if (!res.ok) {
             const err = await res.json();
-            alert(err.error || 'Failed to generate intelligence');
-            loading.style.display = 'none';
-            empty.style.display = 'block';
+            alert(err.error || 'Failed to start intelligence generation');
+            document.getElementById('intel-loading').style.display = 'none';
+            document.getElementById('intel-empty').style.display = 'block';
             return;
         }
 
-        const data = await res.json();
-        intelligenceData = data.intelligence;
-        loading.style.display = 'none';
-        content.style.display = 'block';
-        renderIntelligence(data.intelligence);
+        startIntelPoll();
     } catch (e) {
-        alert('Failed to generate intelligence. Please try again.');
-        loading.style.display = 'none';
-        empty.style.display = 'block';
+        alert('Failed to start intelligence generation. Please try again.');
+        document.getElementById('intel-loading').style.display = 'none';
+        document.getElementById('intel-empty').style.display = 'block';
     }
 };
 
 function renderIntelligence(data) {
-    renderBusinessProfile(data.businessProfile || {});
-    renderBusinessModelCanvas(data.businessModelCanvas || {});
-    renderKnowledgeGaps(data.knowledgeGaps || []);
-    renderServiceBlueprint(data.serviceBlueprint || {});
-    renderPainPoints(data.painPoints || []);
-    renderToolsInventory(data.toolsInventory || []);
-    renderContextCoverage(data.contextCoverage || {});
+    if (data.businessProfile) renderBusinessProfile(data.businessProfile);
+    if (data.businessModelCanvas) renderBusinessModelCanvas(data.businessModelCanvas);
+    if (data.knowledgeGaps) renderKnowledgeGaps(data.knowledgeGaps);
+    if (data.serviceBlueprint) renderServiceBlueprint(data.serviceBlueprint);
+    if (data.painPoints) renderPainPoints(data.painPoints);
+    if (data.toolsInventory) renderToolsInventory(data.toolsInventory);
+    if (data.contextCoverage) renderContextCoverage(data.contextCoverage);
 
-    // Update sub-tab indicator dots
     const indicators = {
         profile: !!(data.businessProfile && Object.keys(data.businessProfile).length),
         blueprint: !!((data.serviceBlueprint || {}).stages || []).length,
